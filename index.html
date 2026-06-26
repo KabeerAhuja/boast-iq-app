@@ -2272,9 +2272,101 @@
   @media (max-width: 1100px) {
     .dashboard { grid-template-columns: 1fr; }
   }
+
+  /* ===== Demo mode: read-only public viewer ===== */
+  body.demo-mode .header,
+  body.demo-mode #login-overlay,
+  body.demo-mode #step-videos,
+  body.demo-mode #step-upload,
+  body.demo-mode #step-config,
+  body.demo-mode #step-select,
+  body.demo-mode #step-process,
+  body.demo-mode #btn-back-to-videos,
+  body.demo-mode #btn-manage-coach,
+  body.demo-mode #user-info,
+  body.demo-mode #coach-modal,
+  body.demo-mode .video-card-share-btn,
+  body.demo-mode #step-results .results-share-btn { display: none !important; }
+
+  body.demo-mode #demo-banner {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 24px;
+    background: linear-gradient(180deg, #1A1A1C, #141416);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #F5F5F7;
+  }
+  body.demo-mode #demo-banner .demo-banner-left {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 14px;
+  }
+  body.demo-mode #demo-banner .demo-pill {
+    background: rgba(160,40,58,0.18);
+    color: #C9344A;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(201,52,74,0.35);
+  }
+  body.demo-mode #demo-banner .demo-banner-msg {
+    color: #A0A0A8;
+  }
+  body.demo-mode #demo-banner .demo-cta {
+    appearance: none;
+    border: 0;
+    background: linear-gradient(180deg, #A0283A, #862232);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 180ms ease, transform 180ms ease;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  body.demo-mode #demo-banner .demo-cta:hover {
+    background: linear-gradient(180deg, #C9344A, #A0283A);
+    transform: translateY(-1px);
+  }
+  body:not(.demo-mode) #demo-banner { display: none; }
+
+  @media (max-width: 640px) {
+    body.demo-mode #demo-banner { padding: 10px 14px; gap: 10px; }
+    body.demo-mode #demo-banner .demo-banner-left { font-size: 13px; gap: 8px; }
+    body.demo-mode #demo-banner .demo-banner-msg { display: none; }
+    body.demo-mode #demo-banner .demo-cta { padding: 7px 12px; font-size: 13px; }
+  }
 </style>
 </head>
 <body>
+
+<!-- Demo-mode early bootstrap: runs before anything else paints so we don't flash auth UI -->
+<script>
+  window.__IS_DEMO__ = new URLSearchParams(location.search).has('demo');
+  window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_6dc8d705_2026-06-25_21-37-55';
+  if (window.__IS_DEMO__) document.body.classList.add('demo-mode');
+</script>
+
+<!-- Demo banner: only renders when body.demo-mode is set -->
+<div id="demo-banner" role="banner" aria-label="Demo mode banner">
+  <div class="demo-banner-left">
+    <span class="demo-pill">Demo</span>
+    <span class="demo-banner-msg">You're viewing a sample match analysis.</span>
+  </div>
+  <a class="demo-cta" href="https://app.boast-iq.com/">Sign in to upload your own match →</a>
+</div>
 
 <div class="bg-gradient"></div>
 <div class="speed-indicator" id="speed-indicator">⚡ 2x Speed</div>
@@ -2828,6 +2920,10 @@ async function renderClipViewer(videoKey, pointNumber) {
 }
 
 onAuthStateChanged(fbAuth, async (user) => {
+  if (window.__IS_DEMO__) {
+    console.log("[DEMO] skipping normal auth flow");
+    return;
+  }
   console.log("[DEBUG] onAuthStateChanged fired. user:", user ? user.uid : "null");
   currentUser = user;
   if (user) {
@@ -5377,6 +5473,36 @@ function showResults(msg) {
     });
     
   }, 1500);
+}
+
+/* ===== Demo mode loader =====
+   Runs after all functions (openVideo, showResults, showStep) are defined.
+   Loads the Conrad demo match and jumps straight to the results view.
+*/
+if (window.__IS_DEMO__) {
+  console.log("[DEMO] booting read-only viewer for", window.__DEMO_VIDEO_KEY__);
+  (async () => {
+    try {
+      videoKey = window.__DEMO_VIDEO_KEY__;
+      // Public-read storage rules let this resolve without auth
+      try {
+        videoBlobUrl = await getDownloadURL(ref(fbStorage, `uploaded-videos/${videoKey}.mp4`));
+      } catch (err) {
+        console.warn("[DEMO] source video URL fetch failed:", err);
+        videoBlobUrl = null;
+      }
+      // Use the Egyptian/Conrad labels that match the source dataset
+      playerConfig = {
+        player_1: { name: "Conrad", handedness: "right" },
+        player_2: { name: "Egyptian", handedness: "right" }
+      };
+      showStep("results");
+      showResults({});
+    } catch (err) {
+      console.error("[DEMO] loader failed:", err);
+      alert("Couldn't load the demo match — try refreshing.");
+    }
+  })();
 }
 </script>
 </body>
