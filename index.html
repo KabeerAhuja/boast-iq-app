@@ -2348,15 +2348,51 @@
     body.demo-mode #demo-banner .demo-banner-msg { display: none; }
     body.demo-mode #demo-banner .demo-cta { padding: 7px 12px; font-size: 13px; }
   }
+
+  /* ===== Trial mode: anonymous-auth upload + view ===== */
+  body.trial-mode #login-overlay,
+  body.trial-mode #step-videos,
+  body.trial-mode #btn-back-to-videos,
+  body.trial-mode #btn-manage-coach,
+  body.trial-mode #user-info,
+  body.trial-mode #coach-modal,
+  body.trial-mode .video-card-share-btn,
+  body.trial-mode #step-results .results-share-btn { display: none !important; }
+
+  body.trial-mode #trial-banner {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 24px;
+    background: linear-gradient(180deg, #1A1A1C, #141416);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #F5F5F7;
+  }
+  body:not(.trial-mode) #trial-banner { display: none; }
+
+  @media (max-width: 640px) {
+    body.trial-mode #trial-banner { padding: 10px 14px; gap: 10px; }
+    body.trial-mode #trial-banner .demo-banner-left { font-size: 13px; gap: 8px; }
+    body.trial-mode #trial-banner .demo-banner-msg { display: none; }
+    body.trial-mode #trial-banner .demo-cta { padding: 7px 12px; font-size: 13px; }
+  }
 </style>
 </head>
 <body>
 
-<!-- Demo-mode early bootstrap: runs before anything else paints so we don't flash auth UI -->
+<!-- Demo/Trial early bootstrap: runs before anything else paints so we don't flash auth UI -->
 <script>
-  window.__IS_DEMO__ = new URLSearchParams(location.search).has('demo');
+  const __params = new URLSearchParams(location.search);
+  window.__IS_DEMO__ = __params.has('demo');
+  window.__IS_TRIAL__ = __params.has('trial');
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_6dc8d705_2026-06-25_21-37-55';
   if (window.__IS_DEMO__) document.body.classList.add('demo-mode');
+  if (window.__IS_TRIAL__) document.body.classList.add('trial-mode');
 </script>
 
 <!-- Demo banner: only renders when body.demo-mode is set -->
@@ -2366,6 +2402,15 @@
     <span class="demo-banner-msg">You're viewing a sample match analysis.</span>
   </div>
   <a class="demo-cta" href="https://app.boast-iq.com/">Sign in to upload your own match →</a>
+</div>
+
+<!-- Trial banner: only renders when body.trial-mode is set -->
+<div id="trial-banner" role="banner" aria-label="Trial mode banner">
+  <div class="demo-banner-left">
+    <span class="demo-pill" style="background:rgba(184,212,224,0.15); color:#B8D4E0; border-color:rgba(184,212,224,0.35);">Free trial</span>
+    <span class="demo-banner-msg">Upload up to 0.5 GB. Sign in to save your match forever.</span>
+  </div>
+  <a class="demo-cta" href="https://app.boast-iq.com/">Sign in with Google →</a>
 </div>
 
 <div class="bg-gradient"></div>
@@ -2701,7 +2746,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, query, where, orderBy, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp, arrayUnion, arrayRemove, limit, writeBatch, startAt, endAt } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -2919,9 +2964,33 @@ async function renderClipViewer(videoKey, pointNumber) {
   `;
 }
 
+// ---- Trial mode: kick off anonymous sign-in immediately ----
+if (window.__IS_TRIAL__) {
+  signInAnonymously(fbAuth).catch((err) => {
+    console.error("[TRIAL] anonymous sign-in failed:", err);
+    alert("Couldn't start trial — make sure your browser allows third-party cookies.");
+  });
+}
+
 onAuthStateChanged(fbAuth, async (user) => {
   if (window.__IS_DEMO__) {
     console.log("[DEMO] skipping normal auth flow");
+    return;
+  }
+  if (window.__IS_TRIAL__) {
+    if (!user) return; // still waiting for anon sign-in to resolve
+    console.log("[TRIAL] anonymous user ready:", user.uid);
+    currentUser = user;
+    if (localStorage.getItem("boastiq_trial_used") === "1") {
+      // Skip straight to a friendly soft-block; banner CTA still works
+      showStep("upload");
+      setTimeout(() => {
+        const z = document.getElementById("upload-zone");
+        if (z) z.innerHTML = '<div style="padding:32px; text-align:center;"><strong>You\'ve already used your free trial on this browser.</strong><br><br>Sign in with Google to upload more matches.</div>';
+      }, 100);
+      return;
+    }
+    showStep("upload");
     return;
   }
   console.log("[DEBUG] onAuthStateChanged fired. user:", user ? user.uid : "null");
@@ -3734,12 +3803,24 @@ uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("drag
 uploadZone.addEventListener("drop", e => { e.preventDefault(); uploadZone.classList.remove("dragover"); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener("change", () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
 const ACCEPTED_VIDEO_EXTS = [".mp4", ".mov"];
+const TRIAL_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 0.5 GB cap for ?trial only
 async function handleFile(file) {
   const nameLower = (file.name || "").toLowerCase();
   const extOk = ACCEPTED_VIDEO_EXTS.some(ext => nameLower.endsWith(ext));
   const mimeOk = file.type && file.type.startsWith("video/");
   if (!mimeOk && !extOk) { alert("Please upload an MP4 or MOV video file."); return; }
   if (!currentUser) { alert("You must be signed in to upload."); return; }
+  if (window.__IS_TRIAL__) {
+    if (localStorage.getItem("boastiq_trial_used") === "1") {
+      alert("You've already used your free trial on this browser. Sign in with Google to upload more matches.");
+      return;
+    }
+    if (file.size > TRIAL_MAX_UPLOAD_BYTES) {
+      alert(`This video is ${(file.size / 1e9).toFixed(2)} GB. Free trial caps uploads at 0.5 GB — please trim or compress, or sign in for the full version.`);
+      return;
+    }
+    localStorage.setItem("boastiq_trial_used", "1");
+  }
   videoBlobUrl = URL.createObjectURL(file);
 
   // Generate video_key client-side and create the Firestore record FIRST.
