@@ -2981,6 +2981,13 @@ onAuthStateChanged(fbAuth, async (user) => {
     if (!user) return; // still waiting for anon sign-in to resolve
     console.log("[TRIAL] anonymous user ready:", user.uid);
     currentUser = user;
+    // Anonymous users still need a /users/{uid} doc so Firestore + Storage
+    // rules that key off ownership don't reject the subsequent video create.
+    try {
+      await ensureUserDoc(user);
+    } catch (err) {
+      console.error("[TRIAL] ensureUserDoc failed:", err);
+    }
     if (localStorage.getItem("boastiq_trial_used") === "1") {
       // Skip straight to a friendly soft-block; banner CTA still works
       showStep("upload");
