@@ -1779,6 +1779,34 @@
     font-size: 14px;
     color: var(--text-dim);
   }
+  .student-detail-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .btn-remove-student {
+    appearance: none;
+    border: 1px solid rgba(201, 52, 74, 0.4);
+    background: rgba(201, 52, 74, 0.08);
+    color: #C9344A;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .btn-remove-student:hover {
+    background: #C9344A;
+    border-color: #C9344A;
+    color: #fff;
+  }
+  .btn-remove-student:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
   .student-stat-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -2466,6 +2494,7 @@
   body.demo-mode #admin-coaches-modal,
   body.demo-mode #add-student-modal,
   body.demo-mode #invite-accept-modal,
+  body.demo-mode #remove-student-modal,
   body.demo-mode .video-card-share-btn,
   body.demo-mode #step-results .results-share-btn { display: none !important; }
 
@@ -2542,6 +2571,7 @@
   body.trial-mode #admin-coaches-modal,
   body.trial-mode #add-student-modal,
   body.trial-mode #invite-accept-modal,
+  body.trial-mode #remove-student-modal,
   body.trial-mode .video-card-share-btn,
   body.trial-mode #step-results .results-share-btn { display: none !important; }
 
@@ -2725,6 +2755,29 @@
     </div>
     <div class="share-section" id="invite-accept-body">
       <!-- Filled by JS: coach photo + name + email + accept/decline buttons -->
+    </div>
+  </div>
+</div>
+
+<!-- Coach: confirm "Remove student" modal -->
+<div id="remove-student-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Remove student?</h3>
+      <button class="modal-close" id="btn-close-remove-student" aria-label="Close">×</button>
+    </div>
+    <div class="share-section">
+      <div class="share-link-hint" id="remove-student-body">
+        <!-- Filled by JS with the student's name. -->
+      </div>
+      <div class="share-link-hint" style="margin-top:8px;">
+        You'll lose access to all of their matches. If they currently have you set as their coach, that link will also be cleared. They can re-add you anytime.
+      </div>
+      <div class="share-msg" id="remove-student-msg" style="display:none;"></div>
+    </div>
+    <div class="share-section" style="display:flex; gap:12px;">
+      <button class="btn btn-secondary" id="btn-cancel-remove-student" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary" id="btn-confirm-remove-student" style="flex:1; background:#C9344A; border-color:#C9344A;">Remove</button>
     </div>
   </div>
 </div>
@@ -6508,6 +6561,15 @@ async function openStudentDetail(profile) {
   meta.appendChild(nm); meta.appendChild(em);
   headerEl.appendChild(meta);
 
+  const actions = document.createElement("div");
+  actions.className = "student-detail-actions";
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "btn-remove-student";
+  removeBtn.textContent = "Remove student";
+  removeBtn.addEventListener("click", () => openRemoveStudentModal(profile));
+  actions.appendChild(removeBtn);
+  headerEl.appendChild(actions);
+
   statsEl.innerHTML = "";
   loadingEl.style.display = "block";
   emptyEl.style.display = "none";
@@ -6580,6 +6642,111 @@ function renderStudentStats(host, videoDatas, totalMatches) {
     note.style.gridColumn = "1 / -1";
     note.textContent = `Stats backfill: ${countedAgg}/${totalMatches} matches indexed. Open a match to backfill.`;
     host.appendChild(note);
+  }
+}
+
+// ---------- Remove Student (inverse of accept-invite) ----------
+const removeStudentModal = document.getElementById("remove-student-modal");
+const removeStudentBody = document.getElementById("remove-student-body");
+const removeStudentMsg = document.getElementById("remove-student-msg");
+const btnConfirmRemoveStudent = document.getElementById("btn-confirm-remove-student");
+const btnCancelRemoveStudent = document.getElementById("btn-cancel-remove-student");
+const btnCloseRemoveStudent = document.getElementById("btn-close-remove-student");
+
+let pendingRemoveStudent = null; // profile object set when modal opens
+
+btnCloseRemoveStudent.addEventListener("click", closeRemoveStudentModal);
+btnCancelRemoveStudent.addEventListener("click", closeRemoveStudentModal);
+removeStudentModal.addEventListener("click", (e) => { if (e.target === removeStudentModal) closeRemoveStudentModal(); });
+btnConfirmRemoveStudent.addEventListener("click", confirmRemoveStudent);
+
+function openRemoveStudentModal(profile) {
+  pendingRemoveStudent = profile;
+  removeStudentMsg.style.display = "none";
+  removeStudentMsg.textContent = "";
+  removeStudentBody.innerHTML = "";
+  const name = profile.displayName || profile.email || profile.uid;
+  removeStudentBody.innerHTML = `Remove <strong>${escapeHtml(name)}</strong> from your roster?`;
+  btnConfirmRemoveStudent.disabled = false;
+  btnCancelRemoveStudent.disabled = false;
+  removeStudentModal.style.display = "flex";
+}
+
+function closeRemoveStudentModal() {
+  removeStudentModal.style.display = "none";
+  pendingRemoveStudent = null;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+async function confirmRemoveStudent() {
+  if (!pendingRemoveStudent || !currentUser) return;
+  const studentUid = pendingRemoveStudent.uid;
+  const profile = pendingRemoveStudent;
+  btnConfirmRemoveStudent.disabled = true;
+  btnCancelRemoveStudent.disabled = true;
+  removeStudentMsg.style.display = "block";
+  removeStudentMsg.className = "share-msg success";
+  removeStudentMsg.textContent = "Removing access from their videos…";
+
+  try {
+    // 1) Pull every video they own so we can strip me from editor/access lists.
+    //    NOTE: assumes < ~450 videos per student; Firestore batches cap at 500 ops.
+    //    If a single student ever has more, chunk into multiple batches.
+    const videosQ = query(
+      collection(fbFirestore, "videos"),
+      where("ownerUid", "==", studentUid)
+    );
+    const videosSnap = await getDocs(videosQ);
+
+    // 2) Read the student's user doc to decide whether to clear their coachUid.
+    //    Only clear if it currently points at me — otherwise we'd stomp another coach.
+    let shouldClearStudentCoach = false;
+    try {
+      const studentSnap = await getDoc(doc(fbFirestore, "users", studentUid));
+      if (studentSnap.exists() && studentSnap.data().coachUid === currentUser.uid) {
+        shouldClearStudentCoach = true;
+      }
+    } catch (err) {
+      console.warn("removeStudent: student doc read failed (will skip coachUid clear):", err);
+    }
+
+    const batch = writeBatch(fbFirestore);
+    videosSnap.docs.forEach((vd) => {
+      batch.update(doc(fbFirestore, "videos", vd.id), {
+        editorUids: arrayRemove(currentUser.uid),
+        accessUids: arrayRemove(currentUser.uid),
+      });
+    });
+    batch.update(doc(fbFirestore, "users", currentUser.uid), {
+      students: arrayRemove(studentUid),
+    });
+    if (shouldClearStudentCoach) {
+      batch.update(doc(fbFirestore, "users", studentUid), {
+        coachUid: null,
+      });
+    }
+    await batch.commit();
+
+    removeStudentMsg.className = "share-msg success";
+    removeStudentMsg.textContent = "Removed.";
+    await refreshCurrentUserDoc();
+    setTimeout(async () => {
+      closeRemoveStudentModal();
+      // Back to roster and refresh the list so the removed student disappears.
+      showRosterView();
+      await loadRoster();
+    }, 700);
+  } catch (err) {
+    console.error("confirmRemoveStudent failed:", err);
+    removeStudentMsg.className = "share-msg error";
+    removeStudentMsg.textContent = `Failed: ${err.code || err.message}`;
+    btnConfirmRemoveStudent.disabled = false;
+    btnCancelRemoveStudent.disabled = false;
   }
 }
 
