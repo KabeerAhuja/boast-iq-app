@@ -3591,9 +3591,7 @@ async function loadMyVideos() {
   empty.style.display = "none";
   grid.innerHTML = "";
 
-  // Reveal filter chips only for coaches; everyone else sees the plain list.
-  const isCoach = !!(currentUserDoc && currentUserDoc.isCoach);
-  filterBar.style.display = isCoach ? "flex" : "none";
+  filterBar.style.display = "flex";
 
   try {
     const q = query(
