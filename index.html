@@ -1905,10 +1905,15 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 16px;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     backdrop-filter: blur(12px);
+  }
+  .video-card > .video-card-thumb {
+    border-radius: 16px 16px 0 0;
+    overflow: hidden;
   }
 
   .video-card:hover {
@@ -2008,6 +2013,113 @@
     color: var(--purple);
     text-transform: uppercase;
     letter-spacing: 1px;
+  }
+
+  /* My Videos filter chips (coach-only) */
+  .videos-filter {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .filter-chip {
+    appearance: none;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .filter-chip:hover {
+    color: var(--text);
+    border-color: var(--border-bright);
+  }
+  .filter-chip.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* 3-dot menu button overlaid on each video card */
+  .video-card-menu-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 3;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: rgba(10, 10, 12, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    font-size: 16px;
+    line-height: 1;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .video-card-menu-btn:hover {
+    background: rgba(10, 10, 12, 0.9);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+  .video-card-menu-pop {
+    position: absolute;
+    top: 46px;
+    right: 10px;
+    z-index: 5;
+    min-width: 150px;
+    background: #1A1A1F;
+    border: 1px solid var(--border-bright);
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    display: none;
+  }
+  .video-card-menu-pop.open { display: block; }
+  .video-card-menu-pop button {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    text-align: left;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .video-card-menu-pop button:hover {
+    background: var(--surface-hover);
+  }
+  .video-card-menu-pop button.danger {
+    color: #C9344A;
+  }
+
+  /* Owner label (bottom-right of card body) */
+  .video-card-owner {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: auto;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .video-card-owner.self {
+    color: var(--accent);
   }
 
   /* Modal overlay */
@@ -2495,7 +2607,9 @@
   body.demo-mode #add-student-modal,
   body.demo-mode #invite-accept-modal,
   body.demo-mode #remove-student-modal,
+  body.demo-mode #rename-video-modal,
   body.demo-mode .video-card-share-btn,
+  body.demo-mode .video-card-menu-btn,
   body.demo-mode #step-results .results-share-btn { display: none !important; }
 
   body.demo-mode #demo-banner {
@@ -2572,7 +2686,9 @@
   body.trial-mode #add-student-modal,
   body.trial-mode #invite-accept-modal,
   body.trial-mode #remove-student-modal,
+  body.trial-mode #rename-video-modal,
   body.trial-mode .video-card-share-btn,
+  body.trial-mode .video-card-menu-btn,
   body.trial-mode #step-results .results-share-btn { display: none !important; }
 
   body.trial-mode #trial-banner {
@@ -2759,6 +2875,27 @@
   </div>
 </div>
 
+<!-- Rename video modal -->
+<div id="rename-video-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Rename video</h3>
+      <button class="modal-close" id="btn-close-rename-video" aria-label="Close">×</button>
+    </div>
+    <div class="share-section">
+      <div class="form-label">Video title</div>
+      <div class="share-link-row">
+        <input type="text" class="form-input" id="rename-video-input" placeholder="Match title" autocomplete="off">
+      </div>
+      <div class="share-msg" id="rename-video-msg" style="display:none;"></div>
+    </div>
+    <div class="share-section" style="display:flex; gap:12px;">
+      <button class="btn btn-secondary" id="btn-cancel-rename-video" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary" id="btn-confirm-rename-video" style="flex:1;">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Coach: confirm "Remove student" modal -->
 <div id="remove-student-modal" class="modal-overlay" style="display:none;">
   <div class="modal-card">
@@ -2833,6 +2970,12 @@
         <div class="step-title">My Videos</div>
       </div>
       <button class="btn btn-primary" id="btn-new-upload">+ Upload New Video</button>
+    </div>
+    <!-- Coach-only filter chips (hidden by default; revealed when isCoach == true) -->
+    <div class="videos-filter" id="videos-filter" style="display:none;">
+      <button class="filter-chip active" data-filter="all" type="button">All</button>
+      <button class="filter-chip" data-filter="mine" type="button">My Uploads</button>
+      <button class="filter-chip" data-filter="shared" type="button">Shared with Me</button>
     </div>
     <div class="videos-loading" id="videos-loading">Loading…</div>
     <div class="videos-empty" id="videos-empty" style="display:none;">
@@ -3148,6 +3291,7 @@ async function createVideoDoc(videoKey, file) {
     await setDoc(doc(fbFirestore, "videos", videoKey), {
       ownerUid: currentUser.uid,
       ownerEmail: currentUser.email || null,
+      ownerDisplayName: currentUser.displayName || null,
       title: file.name,
       createdAt: serverTimestamp(),
       status: "uploading",
@@ -3433,14 +3577,24 @@ function goToMyVideos() {
 }
 
 // ---- My Videos list ----
+// In-memory holder so the coach filter can re-render without re-querying.
+let myVideosCache = [];
+let myVideosFilter = "all"; // "all" | "mine" | "shared"
+
 async function loadMyVideos() {
   if (!currentUser) return;
   const grid = document.getElementById("videos-grid");
   const loading = document.getElementById("videos-loading");
   const empty = document.getElementById("videos-empty");
+  const filterBar = document.getElementById("videos-filter");
   loading.style.display = "block";
   empty.style.display = "none";
   grid.innerHTML = "";
+
+  // Reveal filter chips only for coaches; everyone else sees the plain list.
+  const isCoach = !!(currentUserDoc && currentUserDoc.isCoach);
+  filterBar.style.display = isCoach ? "flex" : "none";
+
   try {
     const q = query(
       collection(fbFirestore, "videos"),
@@ -3449,37 +3603,150 @@ async function loadMyVideos() {
     );
     const snap = await getDocs(q);
     loading.style.display = "none";
-    if (snap.empty) {
-      empty.style.display = "block";
-      return;
-    }
-    const cards = await Promise.all(snap.docs.map(d => renderVideoCard(d.id, d.data())));
-    cards.forEach(c => grid.appendChild(c));
+    myVideosCache = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+    await renderMyVideosFiltered();
   } catch (err) {
     console.error("loadMyVideos failed:", err);
     loading.textContent = `Failed to load videos: ${err.code || err.message}`;
   }
 }
 
+async function renderMyVideosFiltered() {
+  const grid = document.getElementById("videos-grid");
+  const empty = document.getElementById("videos-empty");
+  grid.innerHTML = "";
+  let docs = myVideosCache;
+  if (myVideosFilter === "mine") {
+    docs = docs.filter(({ data }) => data.ownerUid === currentUser.uid);
+  } else if (myVideosFilter === "shared") {
+    docs = docs.filter(({ data }) => data.ownerUid !== currentUser.uid);
+  }
+  if (docs.length === 0) {
+    empty.style.display = "block";
+    const title = empty.querySelector(".videos-empty-title");
+    const desc = empty.querySelector(".videos-empty-desc");
+    if (myVideosFilter === "mine") {
+      if (title) title.textContent = "No uploads yet";
+      if (desc) desc.textContent = "You haven't uploaded any matches yet.";
+    } else if (myVideosFilter === "shared") {
+      if (title) title.textContent = "Nothing shared with you";
+      if (desc) desc.textContent = "When a student adds you as their coach, their matches will show here.";
+    } else {
+      if (title) title.textContent = "No videos yet";
+      if (desc) desc.textContent = "Upload your first squash match video to get started.";
+    }
+    return;
+  }
+  empty.style.display = "none";
+  const cards = await Promise.all(docs.map(({ id, data }) => renderVideoCard(id, data)));
+  cards.forEach((c) => grid.appendChild(c));
+}
+
+// Filter chip handlers
+document.querySelectorAll("#videos-filter .filter-chip").forEach((chip) => {
+  chip.addEventListener("click", async () => {
+    const next = chip.dataset.filter;
+    if (next === myVideosFilter) return;
+    myVideosFilter = next;
+    document.querySelectorAll("#videos-filter .filter-chip").forEach((c) => {
+      c.classList.toggle("active", c === chip);
+    });
+    await renderMyVideosFiltered();
+  });
+});
+
+// ---- Rename video modal ----
+const renameVideoModal = document.getElementById("rename-video-modal");
+const renameVideoInput = document.getElementById("rename-video-input");
+const renameVideoMsg = document.getElementById("rename-video-msg");
+const btnConfirmRename = document.getElementById("btn-confirm-rename-video");
+const btnCancelRename = document.getElementById("btn-cancel-rename-video");
+const btnCloseRename = document.getElementById("btn-close-rename-video");
+let pendingRenameKey = null;
+
+btnCloseRename.addEventListener("click", closeRenameVideoModal);
+btnCancelRename.addEventListener("click", closeRenameVideoModal);
+renameVideoModal.addEventListener("click", (e) => { if (e.target === renameVideoModal) closeRenameVideoModal(); });
+btnConfirmRename.addEventListener("click", confirmRenameVideo);
+renameVideoInput.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmRenameVideo(); });
+
+function openRenameVideoModal(videoKeyId, data) {
+  pendingRenameKey = videoKeyId;
+  renameVideoMsg.style.display = "none";
+  renameVideoInput.value = data.title || videoKeyId;
+  btnConfirmRename.disabled = false;
+  btnCancelRename.disabled = false;
+  renameVideoModal.style.display = "flex";
+  setTimeout(() => { renameVideoInput.focus(); renameVideoInput.select(); }, 50);
+}
+
+function closeRenameVideoModal() {
+  renameVideoModal.style.display = "none";
+  pendingRenameKey = null;
+}
+
+async function confirmRenameVideo() {
+  if (!pendingRenameKey) return;
+  const newTitle = renameVideoInput.value.trim();
+  if (!newTitle) {
+    renameVideoMsg.style.display = "block";
+    renameVideoMsg.className = "share-msg error";
+    renameVideoMsg.textContent = "Title can't be empty.";
+    return;
+  }
+  btnConfirmRename.disabled = true;
+  btnCancelRename.disabled = true;
+  try {
+    await updateDoc(doc(fbFirestore, "videos", pendingRenameKey), { title: newTitle });
+    // Patch the in-memory cache so the re-render uses the new title without a refetch.
+    const cached = myVideosCache.find((v) => v.id === pendingRenameKey);
+    if (cached) cached.data.title = newTitle;
+    closeRenameVideoModal();
+    await renderMyVideosFiltered();
+  } catch (err) {
+    console.error("rename failed:", err);
+    renameVideoMsg.style.display = "block";
+    renameVideoMsg.className = "share-msg error";
+    renameVideoMsg.textContent = `Failed: ${err.code || err.message}`;
+    btnConfirmRename.disabled = false;
+    btnCancelRename.disabled = false;
+  }
+}
+
+// Module-level cache: uid -> { displayName, email, photoURL }.
+// Populated lazily as cards render so we don't re-fetch the same user 10x.
+const ownerProfileCache = new Map();
+
+async function getOwnerProfile(uid) {
+  if (!uid) return null;
+  if (ownerProfileCache.has(uid)) return ownerProfileCache.get(uid);
+  try {
+    const snap = await getDoc(doc(fbFirestore, "users", uid));
+    const profile = snap.exists() ? snap.data() : null;
+    ownerProfileCache.set(uid, profile);
+    return profile;
+  } catch (err) {
+    console.warn("getOwnerProfile failed for", uid, err);
+    ownerProfileCache.set(uid, null);
+    return null;
+  }
+}
+
 async function renderVideoCard(videoKeyId, data) {
   const card = document.createElement("div");
   card.className = "video-card";
+  card.dataset.videoKey = videoKeyId;
+  card.dataset.ownerUid = data.ownerUid || "";
+
   const thumb = document.createElement("div");
   thumb.className = "video-card-thumb";
-  // Status badge
-  const status = data.status || "ready";
-  const statusBadge = document.createElement("div");
-  statusBadge.className = `video-card-status ${status}`;
-  statusBadge.textContent = status;
-  thumb.appendChild(statusBadge);
-  // Try to load thumbnail image
   if (data.thumbnailPath) {
     try {
       const url = await getDownloadURL(ref(fbStorage, data.thumbnailPath));
       const img = document.createElement("img");
       img.src = url;
       img.alt = data.title || "thumbnail";
-      thumb.insertBefore(img, statusBadge);
+      thumb.appendChild(img);
     } catch (err) {
       console.warn("Thumbnail load failed:", err);
       thumb.appendChild(document.createTextNode("🎬"));
@@ -3487,6 +3754,46 @@ async function renderVideoCard(videoKeyId, data) {
   } else {
     thumb.appendChild(document.createTextNode("🎬"));
   }
+
+  const isOwner = data.ownerUid === currentUser.uid;
+
+  // 3-dot menu (owner-only actions for now)
+  if (isOwner) {
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "video-card-menu-btn";
+    menuBtn.type = "button";
+    menuBtn.setAttribute("aria-label", "Video options");
+    menuBtn.textContent = "⋮";
+    const pop = document.createElement("div");
+    pop.className = "video-card-menu-pop";
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeAllVideoCardMenus();
+      openRenameVideoModal(videoKeyId, data);
+    });
+    const shareInMenuBtn = document.createElement("button");
+    shareInMenuBtn.type = "button";
+    shareInMenuBtn.textContent = "Share";
+    shareInMenuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeAllVideoCardMenus();
+      openShareDialog(videoKeyId, data);
+    });
+    pop.appendChild(renameBtn);
+    pop.appendChild(shareInMenuBtn);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = pop.classList.contains("open");
+      closeAllVideoCardMenus();
+      if (!wasOpen) pop.classList.add("open");
+    });
+    card.appendChild(menuBtn);
+    card.appendChild(pop);
+  }
+
   // Body
   const body = document.createElement("div");
   body.className = "video-card-body";
@@ -3500,22 +3807,22 @@ async function renderVideoCard(videoKeyId, data) {
   dateSpan.textContent = dateStr;
   metaEl.appendChild(dateSpan);
 
-  const isOwner = data.ownerUid === currentUser.uid;
+  // Owner label, bottom-right of meta row.
+  const ownerEl = document.createElement("span");
+  ownerEl.className = "video-card-owner" + (isOwner ? " self" : "");
+  // Show "You" instantly for self, otherwise fall back to email then upgrade to displayName.
   if (isOwner) {
-    const shareBtn = document.createElement("button");
-    shareBtn.className = "video-card-share-btn";
-    shareBtn.textContent = "Share";
-    shareBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openShareDialog(videoKeyId, data);
-    });
-    metaEl.appendChild(shareBtn);
+    ownerEl.textContent = "You";
   } else {
-    const sharedTag = document.createElement("span");
-    sharedTag.className = "video-card-shared-tag";
-    sharedTag.textContent = "Shared";
-    metaEl.appendChild(sharedTag);
+    ownerEl.textContent = data.ownerDisplayName || data.ownerEmail || "Shared";
+    // Async upgrade to displayName if we only have email.
+    if (!data.ownerDisplayName && data.ownerUid) {
+      getOwnerProfile(data.ownerUid).then((p) => {
+        if (p && p.displayName) ownerEl.textContent = p.displayName;
+      });
+    }
   }
+  metaEl.appendChild(ownerEl);
 
   body.appendChild(titleEl);
   body.appendChild(metaEl);
@@ -3524,6 +3831,12 @@ async function renderVideoCard(videoKeyId, data) {
   card.addEventListener("click", () => openVideo(videoKeyId, data));
   return card;
 }
+
+function closeAllVideoCardMenus() {
+  document.querySelectorAll(".video-card-menu-pop.open").forEach((el) => el.classList.remove("open"));
+}
+// Dismiss any open card menu when clicking elsewhere on the page.
+document.addEventListener("click", () => closeAllVideoCardMenus());
 
 async function openVideo(key, data) {
   const status = data.status || "ready";
