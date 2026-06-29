@@ -6881,10 +6881,12 @@ async function openStudentDetail(profile) {
   grid.innerHTML = "";
 
   try {
+    // No orderBy here: that combo would require a composite index on
+    // (ownerUid ASC, createdAt DESC). Sort client-side instead — per-student
+    // volumes are small enough that JS sort is fine.
     const vq = query(
       collection(fbFirestore, "videos"),
-      where("ownerUid", "==", profile.uid),
-      orderBy("createdAt", "desc")
+      where("ownerUid", "==", profile.uid)
     );
     const snap = await getDocs(vq);
     loadingEl.style.display = "none";
@@ -6893,7 +6895,11 @@ async function openStudentDetail(profile) {
       renderStudentStats(statsEl, [], 0);
       return;
     }
-    const docs = snap.docs;
+    const docs = snap.docs.slice().sort((a, b) => {
+      const ta = a.data().createdAt && a.data().createdAt.toMillis ? a.data().createdAt.toMillis() : 0;
+      const tb = b.data().createdAt && b.data().createdAt.toMillis ? b.data().createdAt.toMillis() : 0;
+      return tb - ta;
+    });
     renderStudentStats(statsEl, docs.map((d) => d.data()), docs.length);
     const cards = await Promise.all(docs.map((d) => renderVideoCard(d.id, d.data())));
     cards.forEach((c) => grid.appendChild(c));
