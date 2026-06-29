@@ -3805,22 +3805,20 @@ async function renderVideoCard(videoKeyId, data) {
   dateSpan.textContent = dateStr;
   metaEl.appendChild(dateSpan);
 
-  // Owner label, bottom-right of meta row.
-  const ownerEl = document.createElement("span");
-  ownerEl.className = "video-card-owner" + (isOwner ? " self" : "");
-  // Show "You" instantly for self, otherwise fall back to email then upgrade to displayName.
-  if (isOwner) {
-    ownerEl.textContent = "You";
-  } else {
-    ownerEl.textContent = data.ownerDisplayName || data.ownerEmail || "Shared";
-    // Async upgrade to displayName if we only have email.
+  // Owner label, bottom-right of meta row. Hidden entirely for self-owned videos;
+  // for shared videos, prefix with "by" and show the owner's name.
+  if (!isOwner) {
+    const ownerEl = document.createElement("span");
+    ownerEl.className = "video-card-owner";
+    const initial = data.ownerDisplayName || data.ownerEmail || "Shared";
+    ownerEl.textContent = `by ${initial}`;
     if (!data.ownerDisplayName && data.ownerUid) {
       getOwnerProfile(data.ownerUid).then((p) => {
-        if (p && p.displayName) ownerEl.textContent = p.displayName;
+        if (p && p.displayName) ownerEl.textContent = `by ${p.displayName}`;
       });
     }
+    metaEl.appendChild(ownerEl);
   }
-  metaEl.appendChild(ownerEl);
 
   body.appendChild(titleEl);
   body.appendChild(metaEl);
