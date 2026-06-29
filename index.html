@@ -2695,15 +2695,24 @@
       <button class="modal-close" id="btn-close-add-student" aria-label="Close">×</button>
     </div>
     <div class="share-section">
-      <div class="form-label">Student's email</div>
+      <div class="form-label">Search by name or email</div>
       <div class="share-link-row">
-        <input type="email" class="form-input" id="add-student-email" placeholder="student@example.com" autocomplete="off">
+        <input type="text" class="form-input" id="add-student-search" placeholder="Start typing a name or email..." autocomplete="off">
       </div>
-      <div class="share-link-hint">We'll send them an invite. They'll see it the next time they sign in and can accept or decline. If they accept, you'll be set as their coach and get read+write access to every match they own.</div>
+      <div class="share-link-hint">If they already have a Boast IQ account, click their name to send an invite. If not, we'll generate a sign-up link you can share.</div>
       <div class="share-msg" id="add-student-msg" style="display:none;"></div>
+      <div class="coach-results" id="add-student-results"></div>
     </div>
-    <div class="share-section">
-      <button class="btn btn-primary" id="btn-send-student-invite">Send invite</button>
+
+    <!-- Sign-up link generator (shown when no existing user matches an email) -->
+    <div class="share-section" id="add-student-link-section" style="display:none;">
+      <div class="form-label">Sign-up link for <span id="add-student-link-email"></span></div>
+      <div class="share-link-row">
+        <input type="text" class="form-input" id="add-student-link-input" readonly>
+        <button class="btn btn-primary" id="btn-add-student-link-copy">Copy</button>
+      </div>
+      <div class="share-link-hint">Share this link with them. When they sign in with Google for the first time, they'll see your invite and can accept.</div>
+      <div class="share-msg" id="add-student-link-msg" style="display:none;"></div>
     </div>
   </div>
 </div>
@@ -3064,6 +3073,7 @@ async function ensureUserDoc(user) {
     console.log("[DEBUG] Calling setDoc on users/" + user.uid);
     await setDoc(doc(fbFirestore, "users", user.uid), {
       email: user.email || null,
+      email_lower: (user.email || "").toLowerCase(),
       displayName: user.displayName || null,
       displayName_lower: (user.displayName || "").toLowerCase(),
       photoURL: user.photoURL || null,
@@ -6017,14 +6027,28 @@ function buildAdminCoachResultRow(uid, data) {
 }
 
 // ---------- Coach invite flow (Phase 2) ----------
-// Coach side: opens the Add Student modal from the Coach Dashboard.
+// Coach side: search-driven Add Student modal. Existing users get an in-app
+// invite; non-existing emails get a shareable sign-up link.
 const addStudentModal = document.getElementById("add-student-modal");
-const addStudentEmail = document.getElementById("add-student-email");
+const addStudentSearch = document.getElementById("add-student-search");
+const addStudentResults = document.getElementById("add-student-results");
 const addStudentMsg = document.getElementById("add-student-msg");
+const addStudentLinkSection = document.getElementById("add-student-link-section");
+const addStudentLinkEmailLabel = document.getElementById("add-student-link-email");
+const addStudentLinkInput = document.getElementById("add-student-link-input");
+const addStudentLinkMsg = document.getElementById("add-student-link-msg");
 
 document.getElementById("btn-close-add-student").addEventListener("click", closeAddStudentModal);
 addStudentModal.addEventListener("click", (e) => { if (e.target === addStudentModal) closeAddStudentModal(); });
-document.getElementById("btn-send-student-invite").addEventListener("click", sendStudentInvite);
+document.getElementById("btn-add-student-link-copy").addEventListener("click", handleAddStudentLinkCopy);
+
+let addStudentSearchTimer = null;
+addStudentSearch.addEventListener("input", () => {
+  clearTimeout(addStudentSearchTimer);
+  addStudentSearchTimer = setTimeout(runAddStudentSearch, 300);
+});
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function showAddStudentMsg(text, kind) {
   addStudentMsg.style.display = "block";
@@ -6033,24 +6057,145 @@ function showAddStudentMsg(text, kind) {
 }
 function clearAddStudentMsg() { addStudentMsg.style.display = "none"; addStudentMsg.textContent = ""; }
 
+function hideAddStudentLinkSection() {
+  addStudentLinkSection.style.display = "none";
+  addStudentLinkInput.value = "";
+  addStudentLinkMsg.style.display = "none";
+}
+
 function openAddStudentModal() {
   clearAddStudentMsg();
-  addStudentEmail.value = "";
+  hideAddStudentLinkSection();
+  addStudentSearch.value = "";
+  addStudentResults.innerHTML = "<div class='coach-empty'>Type a name or email to find a user.</div>";
   addStudentModal.style.display = "flex";
-  setTimeout(() => addStudentEmail.focus(), 50);
+  setTimeout(() => addStudentSearch.focus(), 50);
 }
 function closeAddStudentModal() {
   addStudentModal.style.display = "none";
+  addStudentResults.innerHTML = "";
 }
 
-async function sendStudentInvite() {
-  const raw = addStudentEmail.value.trim();
-  const emailLower = raw.toLowerCase();
+async function runAddStudentSearch() {
+  const raw = addStudentSearch.value.trim();
+  const q = raw.toLowerCase();
+  addStudentResults.innerHTML = "";
   clearAddStudentMsg();
-  if (!emailLower || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLower)) {
-    showAddStudentMsg("Enter a valid email address.", "error");
+  hideAddStudentLinkSection();
+  if (q.length < 2) {
+    addStudentResults.innerHTML = "<div class='coach-empty'>Type at least 2 characters to search.</div>";
     return;
   }
+  const isEmailLike = EMAIL_RE.test(q);
+  try {
+    // Run name and email queries in parallel. Email is an exact match on email_lower;
+    // name is a prefix match on displayName_lower.
+    const nameQ = query(
+      collection(fbFirestore, "users"),
+      orderBy("displayName_lower"),
+      startAt(q),
+      endAt(q + ""),
+      limit(10)
+    );
+    const emailQ = isEmailLike
+      ? query(collection(fbFirestore, "users"), where("email_lower", "==", q), limit(5))
+      : null;
+
+    const [nameSnap, emailSnap] = await Promise.all([
+      getDocs(nameQ),
+      emailQ ? getDocs(emailQ) : Promise.resolve({ docs: [] }),
+    ]);
+
+    // Merge results, dedupe by uid.
+    const seen = new Set();
+    const merged = [];
+    emailSnap.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); merged.push({ id: d.id, data: d.data() }); } });
+    nameSnap.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); merged.push({ id: d.id, data: d.data() }); } });
+
+    if (merged.length === 0) {
+      // No user matches. If the query looks like a full email, offer the sign-up link.
+      if (isEmailLike) {
+        addStudentResults.innerHTML = "<div class='coach-empty'>No user found with that email. Share a sign-up link instead:</div>";
+        await showSignupLinkFor(q);
+      } else {
+        addStudentResults.innerHTML = "<div class='coach-empty'>No users match. If you have their email, type it in full to send a sign-up link.</div>";
+      }
+      return;
+    }
+    merged.forEach(({ id, data }) => addStudentResults.appendChild(buildAddStudentResultRow(id, data)));
+  } catch (err) {
+    console.error("runAddStudentSearch failed:", err);
+    showAddStudentMsg(`Search failed: ${err.code || err.message}`, "error");
+  }
+}
+
+function buildAddStudentResultRow(uid, data) {
+  const row = document.createElement("div");
+  row.className = "coach-result-row";
+  const photo = document.createElement("img");
+  photo.className = "share-row-photo";
+  photo.src = data.photoURL || "";
+  row.appendChild(photo);
+  const info = document.createElement("div");
+  info.className = "share-row-info";
+  const nameEl = document.createElement("div");
+  nameEl.className = "share-row-name";
+  nameEl.textContent = data.displayName || uid;
+  const emailEl = document.createElement("div");
+  emailEl.className = "share-row-email";
+  emailEl.textContent = data.email || "";
+  info.appendChild(nameEl);
+  info.appendChild(emailEl);
+  row.appendChild(info);
+
+  const myStudents = (currentUserDoc && currentUserDoc.students) || [];
+  if (uid === currentUser.uid) {
+    row.classList.add("disabled");
+    const tag = document.createElement("span");
+    tag.className = "coach-result-tag";
+    tag.textContent = "You";
+    row.appendChild(tag);
+  } else if (myStudents.includes(uid)) {
+    row.classList.add("disabled");
+    const tag = document.createElement("span");
+    tag.className = "coach-result-tag";
+    tag.textContent = "Already a student";
+    row.appendChild(tag);
+  } else {
+    row.addEventListener("click", () => sendInviteToExistingUser(uid, data));
+  }
+  return row;
+}
+
+async function sendInviteToExistingUser(uid, data) {
+  const emailLower = (data.email || "").toLowerCase();
+  if (!emailLower) {
+    showAddStudentMsg("That user doesn't have an email on file — can't invite.", "error");
+    return;
+  }
+  clearAddStudentMsg();
+  try {
+    await setDoc(doc(fbFirestore, "coachInvites", emailLower), {
+      coachUid: currentUser.uid,
+      coachEmail: currentUser.email || null,
+      coachDisplayName: currentUser.displayName || null,
+      coachPhotoURL: currentUser.photoURL || null,
+      inviteeEmail: emailLower,
+      inviteeUid: uid,
+      status: "pending",
+      createdAt: serverTimestamp(),
+    }, { merge: true });
+    showAddStudentMsg(`Invite sent to ${data.displayName || emailLower}. They'll see it next time they sign in.`, "success");
+  } catch (err) {
+    console.error("sendInviteToExistingUser failed:", err);
+    showAddStudentMsg(`Failed: ${err.code || err.message}`, "error");
+  }
+}
+
+// New user path: write the email-keyed invite doc AND surface a shareable
+// coach link the coach can text/email themselves. When the recipient signs in,
+// checkPendingCoachInvite() will fire the accept modal as usual.
+async function showSignupLinkFor(emailLower) {
   if (emailLower === (currentUser.email || "").toLowerCase()) {
     showAddStudentMsg("You can't invite yourself.", "error");
     return;
@@ -6065,11 +6210,29 @@ async function sendStudentInvite() {
       status: "pending",
       createdAt: serverTimestamp(),
     }, { merge: true });
-    showAddStudentMsg(`Invite sent to ${emailLower}. They'll see it next time they sign in.`, "success");
-    addStudentEmail.value = "";
   } catch (err) {
-    console.error("sendStudentInvite failed:", err);
-    showAddStudentMsg(`Failed: ${err.code || err.message}`, "error");
+    console.error("showSignupLinkFor: invite write failed:", err);
+    showAddStudentMsg(`Couldn't save invite: ${err.code || err.message}`, "error");
+    return;
+  }
+  addStudentLinkEmailLabel.textContent = emailLower;
+  addStudentLinkInput.value = buildCoachLink(currentUser.uid);
+  addStudentLinkSection.style.display = "block";
+}
+
+async function handleAddStudentLinkCopy() {
+  const url = addStudentLinkInput.value;
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    addStudentLinkMsg.className = "share-msg success";
+    addStudentLinkMsg.textContent = "Link copied. Share it with them via text or email.";
+    addStudentLinkMsg.style.display = "block";
+  } catch (err) {
+    addStudentLinkInput.select();
+    addStudentLinkMsg.className = "share-msg error";
+    addStudentLinkMsg.textContent = "Couldn't auto-copy. Selected the link — press ⌘C / Ctrl+C.";
+    addStudentLinkMsg.style.display = "block";
   }
 }
 
