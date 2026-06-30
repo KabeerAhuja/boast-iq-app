@@ -4659,9 +4659,10 @@ fileInput.addEventListener("change", () => { if (fileInput.files.length) handleF
 const ACCEPTED_VIDEO_EXTS = [".mp4", ".mov"];
 const TRIAL_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 0.5 GB cap for ?trial only
 
-// Module-level handle to the in-flight upload so Start Tracking can await it.
+// Module-level handles to in-flight upload + backend prepare so Start Tracking can await them.
 let uploadPromise = null;
 let uploadAbort = null;
+let preparePromise = null;
 
 // Extract metadata + first frame from a local File using a hidden <video> element.
 // Returns { frame_b64, frame_blob, src_width, src_height, src_fps, total_frames, duration_sec }.
@@ -4896,6 +4897,28 @@ async function handleFile(file) {
         );
       }
     } catch (err) { console.warn("First frame upload failed:", err); }
+
+    // Kick off /api/prepare (CPU-only ffprobe) in the background NOW, while the
+    // user is tagging players. By the time they click Start Tracking, prepare
+    // should already be complete — avoiding Modal's HTTP request idle timeout
+    // that would otherwise kill a foreground prepare on long videos.
+    preparePromise = (async () => {
+      const prepResp = await fetch(`${API}/api/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: jobId, gcs_path: firebasePath, video_key: videoKey, skip_first_frame: true }),
+      });
+      const meta = await prepResp.json();
+      if (meta.error) throw new Error(meta.error);
+      // Prefer backend-derived metadata (handles VFR / rotation correctly).
+      if (meta.src_width) videoMeta = { ...videoMeta, ...meta };
+      totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+      return meta;
+    })();
+    preparePromise.catch((err) => {
+      console.warn("Background /api/prepare failed:", err);
+      // Don't surface to UI here — startProcessing will report if it really matters.
+    });
   })();
 
   uploadPromise.catch((err) => {
@@ -5205,7 +5228,8 @@ async function startProcessing() {
   document.getElementById("preview-video").src = videoBlobUrl;
   updateVideoStatus(videoKey, "processing");
 
-  // Block until the source video upload finishes, then run /api/prepare (CPU-only ffprobe).
+  // Block until the source video upload finishes — prepare was already kicked off
+  // in the background as part of the upload promise, so we wait on it after.
   if (uploadPromise) {
     updateOverallProgress(0, "Finishing upload...");
     try {
@@ -5216,27 +5240,17 @@ async function startProcessing() {
       return;
     }
   }
-  updateOverallProgress(0, "Preparing video on server...");
-  try {
-    const prepResp = await fetch(`${API}/api/prepare`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job_id: jobId, gcs_path: firebasePath, video_key: videoKey, skip_first_frame: true }),
-    });
-    const meta = await prepResp.json();
-    if (meta.error) {
-      updateOverallProgress(0, `Error: ${meta.error}`);
+  if (preparePromise) {
+    updateOverallProgress(0, "Preparing video on server...");
+    try {
+      await preparePromise;
+    } catch (err) {
+      updateOverallProgress(0, `Prepare failed: ${err.message}`);
       updateVideoStatus(videoKey, "failed");
       return;
     }
-    // Prefer backend-derived metadata for the websocket payload (handles VFR / rotation).
-    if (meta.src_width) videoMeta = { ...videoMeta, ...meta };
-    totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
-  } catch (err) {
-    updateOverallProgress(0, `Prepare failed: ${err.message}`);
-    updateVideoStatus(videoKey, "failed");
-    return;
   }
+  totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
 
   updateOverallProgress(0, "Connecting...");
   const wsUrl = `${API.replace("http", "ws")}/ws/${jobId}`; ws = new WebSocket(wsUrl);
