@@ -1486,6 +1486,293 @@
     white-space: nowrap;
   }
 
+  .user-info-trigger {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    color: var(--text);
+    font: inherit;
+  }
+  .user-info-trigger:hover .user-name { color: var(--accent); }
+  .user-info-trigger:hover .user-photo {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .user-photo { transition: box-shadow 0.15s ease; }
+
+  /* Profile page */
+  .profile-wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding-bottom: 80px;
+  }
+  .profile-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 32px;
+    backdrop-filter: blur(12px);
+  }
+  .profile-header {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .profile-photo-wrap {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    flex-shrink: 0;
+  }
+  .profile-photo-img,
+  .profile-photo-placeholder {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--surface-hover);
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--text-dim);
+  }
+  .profile-photo-edit {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: background 0.15s ease;
+  }
+  .profile-photo-edit:hover { background: var(--accent-bright); }
+  .profile-photo-edit:disabled { opacity: 0.5; cursor: wait; }
+
+  .profile-meta { flex: 1; min-width: 240px; }
+  .profile-name-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .profile-name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+  }
+  .profile-name-edit-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 6px;
+    border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .profile-name-edit-btn:hover { color: var(--accent); background: var(--surface-hover); }
+  .profile-email { font-size: 14px; color: var(--text-dim); }
+  .profile-name-input {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--surface-hover);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 6px 12px;
+    width: 100%;
+    max-width: 320px;
+    outline: none;
+  }
+  .profile-name-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .profile-name-save,
+  .profile-name-cancel {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-hover);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .profile-name-save {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .profile-name-save:hover { background: var(--accent-bright); }
+  .profile-name-save:disabled { opacity: 0.5; cursor: wait; }
+
+  .profile-msg {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .profile-msg.success { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
+  .profile-msg.error { color: var(--red); border-color: var(--red); }
+
+  /* Calendar */
+  .calendar-section { margin-top: 36px; }
+  .calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .calendar-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+  }
+  .calendar-nav {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .calendar-nav button {
+    appearance: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .calendar-nav button:hover {
+    background: var(--surface);
+    border-color: var(--border-bright);
+  }
+  .calendar-nav button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .calendar-month-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    color: var(--text-dim);
+    min-width: 130px;
+    text-align: center;
+  }
+
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+  }
+  .calendar-weekday {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 6px 0;
+  }
+  .calendar-day {
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: default;
+    position: relative;
+    opacity: 0.5;
+    transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  }
+  .calendar-day.has-videos {
+    background: #1e3a5f;
+    border-color: #3b82f6;
+    color: #fff;
+    opacity: 1;
+    cursor: pointer;
+  }
+  .calendar-day.has-videos:hover {
+    background: #3b82f6;
+    transform: translateY(-2px);
+  }
+  .calendar-day.today {
+    border-color: var(--accent);
+  }
+  .calendar-day.placeholder {
+    background: transparent;
+    border: none;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .calendar-day .day-count {
+    font-size: 9px;
+    opacity: 0.75;
+    margin-top: 2px;
+  }
+  .calendar-tooltip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0a0a0c;
+    color: var(--text);
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-bright);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 10;
+    transition: opacity 0.15s ease;
+  }
+  .calendar-day:hover .calendar-tooltip { opacity: 1; }
+
+  .calendar-loading,
+  .calendar-empty {
+    text-align: center;
+    padding: 32px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
   .btn-signout {
     font-family: 'Space Grotesk', sans-serif;
     font-size: 12px;
@@ -2663,6 +2950,7 @@
   /* ===== Demo mode: read-only public viewer ===== */
   body.demo-mode .header,
   body.demo-mode #login-overlay,
+  body.demo-mode #step-profile,
   body.demo-mode #step-videos,
   body.demo-mode #step-upload,
   body.demo-mode #step-config,
@@ -2746,6 +3034,7 @@
 
   /* ===== Trial mode: anonymous-auth upload + view ===== */
   body.trial-mode #login-overlay,
+  body.trial-mode #step-profile,
   body.trial-mode #step-videos,
   body.trial-mode #btn-back-to-videos,
   body.trial-mode #btn-manage-coach,
@@ -2829,8 +3118,10 @@
     <button class="btn-header" id="btn-admin-coaches" style="display:none;">Manage Coaches</button>
     <button class="btn-header" id="btn-manage-coach" style="display:none;">Manage Coach</button>
     <div class="user-info" id="user-info" style="display:none;">
-      <img class="user-photo" id="user-photo" alt="">
-      <span class="user-name" id="user-name"></span>
+      <button class="user-info-trigger" id="btn-open-profile" title="Open profile" type="button">
+        <img class="user-photo" id="user-photo" alt="">
+        <span class="user-name" id="user-name"></span>
+      </button>
       <button class="btn-signout" id="btn-signout" title="Sign out">Sign out</button>
     </div>
   </div>
@@ -3092,6 +3383,52 @@
     </div>
   </div>
 
+  <!-- Profile page -->
+  <div id="step-profile" class="step">
+    <div class="profile-wrap">
+      <div class="profile-card">
+        <div class="profile-header">
+          <div class="profile-photo-wrap">
+            <img class="profile-photo-img" id="profile-photo-img" alt="" style="display:none;">
+            <div class="profile-photo-placeholder" id="profile-photo-placeholder"></div>
+            <button class="profile-photo-edit" id="btn-edit-profile-photo" title="Change profile picture" type="button">✎</button>
+            <input type="file" id="profile-photo-input" accept="image/png,image/jpeg,image/jpg,image/webp" style="display:none;">
+          </div>
+          <div class="profile-meta">
+            <div class="profile-name-row" id="profile-name-display">
+              <h2 class="profile-name" id="profile-name"></h2>
+              <button class="profile-name-edit-btn" id="btn-edit-profile-name" title="Edit display name" type="button">✎</button>
+            </div>
+            <div id="profile-name-edit" style="display:none;">
+              <input type="text" class="profile-name-input" id="profile-name-input" maxlength="60">
+              <div class="profile-name-actions">
+                <button class="profile-name-save" id="btn-save-profile-name" type="button">Save</button>
+                <button class="profile-name-cancel" id="btn-cancel-profile-name" type="button">Cancel</button>
+              </div>
+            </div>
+            <div class="profile-email" id="profile-email"></div>
+          </div>
+        </div>
+        <div class="profile-msg" id="profile-msg" style="display:none;"></div>
+      </div>
+
+      <div class="calendar-section">
+        <div class="calendar-header">
+          <h3 class="calendar-title">Match Activity</h3>
+          <div class="calendar-nav">
+            <button id="btn-cal-prev" title="Previous month" type="button">←</button>
+            <span class="calendar-month-label" id="cal-month-label"></span>
+            <button id="btn-cal-next" title="Next month" type="button">→</button>
+          </div>
+        </div>
+        <div class="profile-card" style="padding: 20px;">
+          <div class="calendar-loading" id="calendar-loading" style="display:none;">Loading…</div>
+          <div class="calendar-grid" id="calendar-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Step 1: Upload -->
   <div id="step-upload" class="step">
     <div class="step-label">Step 1</div>
@@ -3099,9 +3436,14 @@
     <div class="step-desc">Upload your squash match video to begin tracking. We support MP4 and MOV files.</div>
     <div class="upload-zone" id="upload-zone">
       <div class="icon">🎬</div>
-      <div><strong>Drop video here</strong> or click to browse</div>
+      <div><strong>Drop video here</strong>, or tap to choose from files or camera roll</div>
       <p>MP4 or MOV</p>
-      <input type="file" id="file-input" accept="video/mp4,video/quicktime,.mp4,.mov,.MOV">
+      <!--
+        accept="video/*" lets iOS / Android show the native picker with
+        Photo Library / Take Video / Choose Files options. handleFile()
+        validates the file is actually .mp4 / .mov before uploading.
+      -->
+      <input type="file" id="file-input" accept="video/*,.mp4,.mov,.MOV">
     </div>
     <div class="progress-bar-wrap" id="upload-progress">
       <div class="progress-bar-bg"><div class="progress-bar-fill" id="upload-fill"></div></div>
@@ -3330,7 +3672,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, query, where, orderBy, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp, arrayUnion, arrayRemove, limit, writeBatch, startAt, endAt } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -3680,7 +4022,7 @@ let totalSrcFrames = 0, completedSrcFrames = 0, currentSegSrcStart = 0, currentS
 // Find your workspace name from `modal config show` or the Modal dashboard.
 // Format: https://<workspace>--boastiq-tracker-web.modal.run
 const API = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
-const $steps = { videos: document.getElementById("step-videos"), upload: document.getElementById("step-upload"), config: document.getElementById("step-config"), select: document.getElementById("step-select"), process: document.getElementById("step-process"), results: document.getElementById("step-results"), coachDashboard: document.getElementById("step-coach-dashboard") };
+const $steps = { videos: document.getElementById("step-videos"), upload: document.getElementById("step-upload"), config: document.getElementById("step-config"), select: document.getElementById("step-select"), process: document.getElementById("step-process"), results: document.getElementById("step-results"), coachDashboard: document.getElementById("step-coach-dashboard"), profile: document.getElementById("step-profile") };
 const btnBackToVideos = document.getElementById("btn-back-to-videos");
 function showStep(name) {
   Object.values($steps).forEach(s => s.classList.remove("active"));
@@ -3697,6 +4039,8 @@ btnBackToVideos.addEventListener("click", () => {
 });
 
 function goToMyVideos() {
+  // Clear any active date filter from the calendar so the user sees their full list.
+  myVideosDateFilter = null;
   showStep("videos");
   loadMyVideos();
 }
@@ -3705,6 +4049,7 @@ function goToMyVideos() {
 // In-memory holder so the coach filter can re-render without re-querying.
 let myVideosCache = [];
 let myVideosFilter = "all"; // "all" | "mine" | "shared"
+let myVideosDateFilter = null; // "YYYY-MM-DD" set when navigating from the calendar
 
 async function loadMyVideos() {
   if (!currentUser) return;
@@ -3738,17 +4083,50 @@ async function renderMyVideosFiltered() {
   const grid = document.getElementById("videos-grid");
   const empty = document.getElementById("videos-empty");
   grid.innerHTML = "";
+
+  // Render an active-date-filter banner above the grid (with a clear button).
+  let banner = document.getElementById("videos-date-banner");
+  if (myVideosDateFilter) {
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "videos-date-banner";
+      banner.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 14px;margin-bottom:14px;background:#1e3a5f;border:1px solid #3b82f6;border-radius:10px;color:#fff;font-size:13px;";
+      grid.parentNode.insertBefore(banner, grid);
+    }
+    banner.innerHTML = `<span>Showing videos from ${myVideosDateFilter}</span><button type="button" id="btn-clear-date-filter" style="margin-left:auto;background:transparent;border:1px solid rgba(255,255,255,0.3);color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">Clear</button>`;
+    document.getElementById("btn-clear-date-filter").addEventListener("click", async () => {
+      myVideosDateFilter = null;
+      await renderMyVideosFiltered();
+    });
+    banner.style.display = "flex";
+  } else if (banner) {
+    banner.remove();
+  }
+
   let docs = myVideosCache;
   if (myVideosFilter === "mine") {
     docs = docs.filter(({ data }) => data.ownerUid === currentUser.uid);
   } else if (myVideosFilter === "shared") {
     docs = docs.filter(({ data }) => data.ownerUid !== currentUser.uid);
   }
+  if (myVideosDateFilter) {
+    docs = docs.filter(({ data }) => {
+      const ts = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+      if (!ts) return false;
+      const y = ts.getFullYear();
+      const m = String(ts.getMonth() + 1).padStart(2, "0");
+      const d = String(ts.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}` === myVideosDateFilter;
+    });
+  }
   if (docs.length === 0) {
     empty.style.display = "block";
     const title = empty.querySelector(".videos-empty-title");
     const desc = empty.querySelector(".videos-empty-desc");
-    if (myVideosFilter === "mine") {
+    if (myVideosDateFilter) {
+      if (title) title.textContent = "No videos that day";
+      if (desc) desc.textContent = "Try clearing the date filter or pick a different day.";
+    } else if (myVideosFilter === "mine") {
       if (title) title.textContent = "No uploads yet";
       if (desc) desc.textContent = "You haven't uploaded any matches yet.";
     } else if (myVideosFilter === "shared") {
@@ -7775,6 +8153,267 @@ async function confirmRemoveStudent() {
     btnConfirmRemoveStudent.disabled = false;
     btnCancelRemoveStudent.disabled = false;
   }
+}
+
+// ===========================================================================
+// Profile page: edit display name / photo + match activity calendar.
+// ===========================================================================
+
+document.getElementById("btn-open-profile").addEventListener("click", openProfilePage);
+
+async function openProfilePage() {
+  if (!currentUser) return;
+  showStep("profile");
+  renderProfileHeader();
+  // Reset to current month each time the page opens.
+  calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  await loadCalendarMonth();
+}
+
+function renderProfileHeader() {
+  const nameEl = document.getElementById("profile-name");
+  const emailEl = document.getElementById("profile-email");
+  const imgEl = document.getElementById("profile-photo-img");
+  const placeholderEl = document.getElementById("profile-photo-placeholder");
+  const display = currentUser.displayName || currentUser.email || "Player";
+  nameEl.textContent = display;
+  emailEl.textContent = currentUser.email || "";
+  if (currentUser.photoURL) {
+    imgEl.src = currentUser.photoURL;
+    imgEl.style.display = "block";
+    placeholderEl.style.display = "none";
+  } else {
+    imgEl.style.display = "none";
+    placeholderEl.style.display = "flex";
+    placeholderEl.textContent = display.trim().charAt(0).toUpperCase();
+  }
+  // Reset edit state
+  document.getElementById("profile-name-display").style.display = "flex";
+  document.getElementById("profile-name-edit").style.display = "none";
+  document.getElementById("profile-msg").style.display = "none";
+}
+
+function showProfileMsg(text, kind) {
+  const m = document.getElementById("profile-msg");
+  m.textContent = text;
+  m.className = "profile-msg" + (kind ? " " + kind : "");
+  m.style.display = "block";
+  setTimeout(() => { if (m.textContent === text) m.style.display = "none"; }, 4000);
+}
+
+// ---- Display name edit ----
+document.getElementById("btn-edit-profile-name").addEventListener("click", () => {
+  document.getElementById("profile-name-display").style.display = "none";
+  const edit = document.getElementById("profile-name-edit");
+  edit.style.display = "block";
+  const input = document.getElementById("profile-name-input");
+  input.value = currentUser.displayName || "";
+  setTimeout(() => { input.focus(); input.select(); }, 30);
+});
+document.getElementById("btn-cancel-profile-name").addEventListener("click", () => {
+  document.getElementById("profile-name-edit").style.display = "none";
+  document.getElementById("profile-name-display").style.display = "flex";
+});
+document.getElementById("profile-name-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); document.getElementById("btn-save-profile-name").click(); }
+  if (e.key === "Escape") document.getElementById("btn-cancel-profile-name").click();
+});
+document.getElementById("btn-save-profile-name").addEventListener("click", async () => {
+  const newName = document.getElementById("profile-name-input").value.trim();
+  if (!newName) { showProfileMsg("Display name can't be empty.", "error"); return; }
+  if (newName === currentUser.displayName) {
+    document.getElementById("profile-name-edit").style.display = "none";
+    document.getElementById("profile-name-display").style.display = "flex";
+    return;
+  }
+  const saveBtn = document.getElementById("btn-save-profile-name");
+  saveBtn.disabled = true;
+  try {
+    await updateProfile(currentUser, { displayName: newName });
+    await setDoc(doc(fbFirestore, "users", currentUser.uid), {
+      displayName: newName,
+      displayName_lower: newName.toLowerCase(),
+    }, { merge: true });
+    renderProfileHeader();
+    document.getElementById("user-name").textContent = newName;
+    showProfileMsg("Display name updated.", "success");
+  } catch (err) {
+    console.error("displayName update failed:", err);
+    showProfileMsg(`Couldn't update: ${err.code || err.message}`, "error");
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
+
+// ---- Profile picture upload ----
+document.getElementById("btn-edit-profile-photo").addEventListener("click", () => {
+  document.getElementById("profile-photo-input").click();
+});
+document.getElementById("profile-photo-input").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    showProfileMsg("Pick an image file (png/jpg/webp).", "error");
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    showProfileMsg("Image must be under 5 MB.", "error");
+    return;
+  }
+  const editBtn = document.getElementById("btn-edit-profile-photo");
+  editBtn.disabled = true;
+  editBtn.textContent = "…";
+  try {
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const path = `user-profiles/${currentUser.uid}/avatar.${ext}`;
+    const storageRef = ref(fbStorage, path);
+    await uploadBytes(storageRef, file, { contentType: file.type });
+    const photoURL = await getDownloadURL(storageRef);
+    await updateProfile(currentUser, { photoURL });
+    await setDoc(doc(fbFirestore, "users", currentUser.uid), { photoURL }, { merge: true });
+    renderProfileHeader();
+    // Refresh the header bubble too.
+    document.getElementById("user-photo").src = photoURL;
+    showProfileMsg("Profile picture updated.", "success");
+  } catch (err) {
+    console.error("photo upload failed:", err);
+    showProfileMsg(`Couldn't upload: ${err.code || err.message}`, "error");
+  } finally {
+    editBtn.disabled = false;
+    editBtn.textContent = "✎";
+    e.target.value = "";
+  }
+});
+
+// ---- Match activity calendar ----
+let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let calVideosByDay = new Map(); // "YYYY-MM-DD" -> array of {id, data}
+
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+document.getElementById("btn-cal-prev").addEventListener("click", () => {
+  calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1);
+  loadCalendarMonth();
+});
+document.getElementById("btn-cal-next").addEventListener("click", () => {
+  calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1);
+  loadCalendarMonth();
+});
+
+function ymdKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+async function loadCalendarMonth() {
+  const grid = document.getElementById("calendar-grid");
+  const loadingEl = document.getElementById("calendar-loading");
+  const label = document.getElementById("cal-month-label");
+  label.textContent = `${MONTH_NAMES[calMonth.getMonth()]} ${calMonth.getFullYear()}`;
+  loadingEl.style.display = "block";
+  grid.innerHTML = "";
+
+  // Disable Next button if we'd go past current month.
+  const now = new Date();
+  const isCurrentOrLater = calMonth.getFullYear() > now.getFullYear() ||
+    (calMonth.getFullYear() === now.getFullYear() && calMonth.getMonth() >= now.getMonth());
+  document.getElementById("btn-cal-next").disabled = isCurrentOrLater;
+
+  try {
+    // Pull every accessible video; bucket by day for the visible month.
+    // Reuses the same accessUids-contains-me query from loadMyVideos so we
+    // include shared videos (per user preference).
+    const q = query(
+      collection(fbFirestore, "videos"),
+      where("accessUids", "array-contains", currentUser.uid)
+    );
+    const snap = await getDocs(q);
+    calVideosByDay = new Map();
+    snap.docs.forEach((d) => {
+      const data = d.data();
+      const ts = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+      if (!ts) return;
+      if (ts.getFullYear() !== calMonth.getFullYear() || ts.getMonth() !== calMonth.getMonth()) return;
+      const key = ymdKey(ts);
+      if (!calVideosByDay.has(key)) calVideosByDay.set(key, []);
+      calVideosByDay.get(key).push({ id: d.id, data });
+    });
+    renderCalendarGrid();
+  } catch (err) {
+    console.error("loadCalendarMonth failed:", err);
+    grid.innerHTML = `<div class="calendar-empty" style="grid-column: 1 / -1;">Failed to load: ${err.code || err.message}</div>`;
+  } finally {
+    loadingEl.style.display = "none";
+  }
+}
+
+function renderCalendarGrid() {
+  const grid = document.getElementById("calendar-grid");
+  grid.innerHTML = "";
+
+  const weekdays = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  weekdays.forEach((w) => {
+    const el = document.createElement("div");
+    el.className = "calendar-weekday";
+    el.textContent = w;
+    grid.appendChild(el);
+  });
+
+  const firstDay = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
+  const lastDay = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0);
+  const startCol = firstDay.getDay();
+  const today = new Date();
+  const todayKey = ymdKey(today);
+
+  // Empty placeholder cells before day 1.
+  for (let i = 0; i < startCol; i++) {
+    const el = document.createElement("div");
+    el.className = "calendar-day placeholder";
+    grid.appendChild(el);
+  }
+
+  for (let d = 1; d <= lastDay.getDate(); d++) {
+    const dayDate = new Date(calMonth.getFullYear(), calMonth.getMonth(), d);
+    const key = ymdKey(dayDate);
+    const videos = calVideosByDay.get(key) || [];
+    const el = document.createElement("div");
+    el.className = "calendar-day";
+    if (videos.length) el.classList.add("has-videos");
+    if (key === todayKey) el.classList.add("today");
+
+    const dayNum = document.createElement("div");
+    dayNum.textContent = String(d);
+    el.appendChild(dayNum);
+
+    if (videos.length) {
+      const count = document.createElement("div");
+      count.className = "day-count";
+      count.textContent = videos.length === 1 ? "1 video" : `${videos.length} videos`;
+      el.appendChild(count);
+    }
+
+    const tip = document.createElement("div");
+    tip.className = "calendar-tooltip";
+    if (videos.length) {
+      tip.textContent = videos.length === 1 ? "1 video uploaded — click to view" : `${videos.length} videos uploaded — click to view`;
+    } else {
+      tip.textContent = "No uploads";
+    }
+    el.appendChild(tip);
+
+    if (videos.length) {
+      el.addEventListener("click", () => navigateToDayVideos(key));
+    }
+    grid.appendChild(el);
+  }
+}
+
+function navigateToDayVideos(ymd) {
+  myVideosDateFilter = ymd;
+  showStep("videos");
+  loadMyVideos();
 }
 
 /* ===== Demo mode loader =====
