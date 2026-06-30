@@ -4898,22 +4898,55 @@ async function handleFile(file) {
       }
     } catch (err) { console.warn("First frame upload failed:", err); }
 
-    // Kick off /api/prepare (CPU-only ffprobe) in the background NOW, while the
-    // user is tagging players. By the time they click Start Tracking, prepare
-    // should already be complete — avoiding Modal's HTTP request idle timeout
-    // that would otherwise kill a foreground prepare on long videos.
+    // Kick off /api/prepare in the background NOW, while the user is tagging
+    // players. The backend spawns prepare_job and returns immediately with a
+    // call_id; we then poll /api/prepare-status until it completes. This avoids
+    // Modal's ~150s HTTP request idle timeout on long videos.
     preparePromise = (async () => {
       const prepResp = await fetch(`${API}/api/prepare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId, gcs_path: firebasePath, video_key: videoKey, skip_first_frame: true }),
       });
-      const meta = await prepResp.json();
-      if (meta.error) throw new Error(meta.error);
-      // Prefer backend-derived metadata (handles VFR / rotation correctly).
-      if (meta.src_width) videoMeta = { ...videoMeta, ...meta };
-      totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
-      return meta;
+      const initial = await prepResp.json();
+      if (initial.error) throw new Error(initial.error);
+
+      // Fast path: backend already had cached metadata for this job_id.
+      if (initial.status === "done") {
+        if (initial.src_width) videoMeta = { ...videoMeta, ...initial };
+        totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+        return initial;
+      }
+
+      // Polling path: spawn returned a call_id; poll until done.
+      const callId = initial.call_id;
+      const firstFrameCallId = initial.first_frame_call_id || null;
+      const POLL_MS = 3000;
+      const MAX_WAIT_MS = 30 * 60 * 1000; // 30 minutes hard cap
+      const t0 = Date.now();
+      while (true) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        if (Date.now() - t0 > MAX_WAIT_MS) {
+          throw new Error("Prepare took too long (>30 min)");
+        }
+        const statusResp = await fetch(`${API}/api/prepare-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            job_id: jobId,
+            call_id: callId,
+            first_frame_call_id: firstFrameCallId,
+          }),
+        });
+        const s = await statusResp.json();
+        if (s.status === "error") throw new Error(s.error || "Prepare failed");
+        if (s.status === "done") {
+          if (s.src_width) videoMeta = { ...videoMeta, ...s };
+          totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+          return s;
+        }
+        // status === "pending": loop again.
+      }
     })();
     preparePromise.catch((err) => {
       console.warn("Background /api/prepare failed:", err);
