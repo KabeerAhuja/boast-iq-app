@@ -375,7 +375,82 @@
   }
   
   .form-input::placeholder { color: var(--text-dim); }
-  
+
+  .player-picker { position: relative; }
+  .player-picker-results {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 6px;
+  }
+  .player-picker-results.open { display: flex; }
+  .player-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .player-picker-row:hover { background: var(--surface-hover); }
+  .player-picker-row.disabled { opacity: 0.5; cursor: not-allowed; }
+  .player-picker-row-photo {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--surface-hover); object-fit: cover; flex-shrink: 0;
+  }
+  .player-picker-row-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .player-picker-row-name { font-size: 14px; color: var(--text); }
+  .player-picker-row-email { font-size: 11px; color: var(--text-dim); }
+  .player-picker-empty { color: var(--text-dim); font-size: 12px; padding: 10px; text-align: center; font-style: italic; }
+
+  .player-picker-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 10px;
+    background: var(--surface-hover); border: 1px solid var(--accent);
+    border-radius: 12px;
+  }
+  .player-picker-photo {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--surface); object-fit: cover; flex-shrink: 0;
+  }
+  .player-picker-meta { flex: 1; min-width: 0; }
+  .player-picker-name { font-size: 14px; color: var(--text); font-weight: 600; }
+  .player-picker-email { font-size: 11px; color: var(--text-dim); }
+  .player-picker-clear {
+    background: transparent; border: none; color: var(--text-dim);
+    cursor: pointer; font-size: 22px; line-height: 1; padding: 0 6px;
+  }
+  .player-picker-clear:hover { color: var(--text); }
+
+  .player-picker-actions { margin-top: 8px; display: flex; gap: 12px; }
+  .btn-link {
+    background: transparent; border: none; color: var(--accent);
+    font-family: 'Space Grotesk', sans-serif; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 1px; cursor: pointer; padding: 0;
+  }
+  .btn-link:hover { text-decoration: underline; }
+
+  .player-picker-invite {
+    display: flex; gap: 8px; margin-top: 10px; align-items: stretch;
+  }
+  .player-picker-invite .form-input { flex: 1; font-size: 12px; padding: 10px 12px; }
+  .btn-sm { padding: 8px 14px; font-size: 12px; }
+
+  .upload-status-banner {
+    margin: 16px 0; padding: 12px 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; font-size: 13px; color: var(--text-dim);
+  }
+  .upload-status-banner.error { border-color: var(--red); color: var(--red); }
+  .upload-status-banner.ready { border-color: var(--accent); color: var(--text); }
+
   .hand-toggle { display: flex; gap: 10px; }
   
   .hand-btn {
@@ -3038,13 +3113,29 @@
   <div id="step-config" class="step">
     <div class="step-label">Step 2</div>
     <div class="step-title">Player Information</div>
-    <div class="step-desc">Enter player names and select their dominant hand. This helps us identify forehands and backhands accurately.</div>
+    <div class="step-desc">Tag each player. Search for an existing user, just type a name, or send an invite link so they can claim the slot themselves.</div>
     <div class="player-config-grid">
       <div class="player-card p1">
         <div class="player-card-header"><div class="dot"></div><h3>Player 1</h3></div>
-        <div class="form-group">
-          <label class="form-label">Name</label>
-          <input type="text" class="form-input" id="p1-name" placeholder="Enter name">
+        <div class="form-group player-picker" data-player="1">
+          <label class="form-label">Player</label>
+          <div class="player-picker-chip" id="p1-chip" style="display:none;">
+            <img class="player-picker-photo" id="p1-photo" alt="" />
+            <div class="player-picker-meta">
+              <div class="player-picker-name" id="p1-chip-name"></div>
+              <div class="player-picker-email" id="p1-chip-email"></div>
+            </div>
+            <button type="button" class="player-picker-clear" id="p1-chip-clear" aria-label="Clear">×</button>
+          </div>
+          <input type="text" class="form-input player-picker-input" id="p1-name" placeholder="Search a user or type a name">
+          <div class="player-picker-results" id="p1-results"></div>
+          <div class="player-picker-actions">
+            <button type="button" class="btn-link" id="p1-btn-invite">Send invite link</button>
+          </div>
+          <div class="player-picker-invite" id="p1-invite" style="display:none;">
+            <input type="text" class="form-input" id="p1-invite-input" readonly>
+            <button type="button" class="btn btn-secondary btn-sm" id="p1-invite-copy">Copy</button>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Dominant Hand</label>
@@ -3056,9 +3147,25 @@
       </div>
       <div class="player-card p2">
         <div class="player-card-header"><div class="dot"></div><h3>Player 2</h3></div>
-        <div class="form-group">
-          <label class="form-label">Name</label>
-          <input type="text" class="form-input" id="p2-name" placeholder="Enter name">
+        <div class="form-group player-picker" data-player="2">
+          <label class="form-label">Player</label>
+          <div class="player-picker-chip" id="p2-chip" style="display:none;">
+            <img class="player-picker-photo" id="p2-photo" alt="" />
+            <div class="player-picker-meta">
+              <div class="player-picker-name" id="p2-chip-name"></div>
+              <div class="player-picker-email" id="p2-chip-email"></div>
+            </div>
+            <button type="button" class="player-picker-clear" id="p2-chip-clear" aria-label="Clear">×</button>
+          </div>
+          <input type="text" class="form-input player-picker-input" id="p2-name" placeholder="Search a user or type a name">
+          <div class="player-picker-results" id="p2-results"></div>
+          <div class="player-picker-actions">
+            <button type="button" class="btn-link" id="p2-btn-invite">Send invite link</button>
+          </div>
+          <div class="player-picker-invite" id="p2-invite" style="display:none;">
+            <input type="text" class="form-input" id="p2-invite-input" readonly>
+            <button type="button" class="btn btn-secondary btn-sm" id="p2-invite-copy">Copy</button>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Dominant Hand</label>
@@ -3069,6 +3176,7 @@
         </div>
       </div>
     </div>
+    <div class="upload-status-banner" id="config-upload-status" style="display:none;"></div>
     <div class="btn-row"><button class="btn btn-primary" id="btn-continue-config">Continue →</button></div>
   </div>
 
@@ -3335,10 +3443,14 @@ btnSignOut.addEventListener("click", async () => {
   try { await signOut(fbAuth); } catch (err) { console.error("Sign-out failed:", err); }
 });
 
-// If the page loaded via a share link or coach link, customize the login-overlay message.
+// If the page loaded via a share link, coach link, or player-invite link, customize the login-overlay message.
 const pendingShareOnLoad = getPendingShareKey();
 const pendingCoachOnLoad = getPendingCoachUid();
-if (pendingShareOnLoad) {
+const pendingInviteOnLoad = getPendingInvite();
+if (pendingInviteOnLoad) {
+  document.getElementById("login-desc").textContent =
+    "You've been invited to be tagged as a player in a squash video. Sign in with Google to accept.";
+} else if (pendingShareOnLoad) {
   document.getElementById("login-desc").textContent =
     "You've been invited to view a shared video. Sign in with Google to continue.";
 } else if (pendingCoachOnLoad) {
@@ -3527,6 +3639,23 @@ onAuthStateChanged(fbAuth, async (user) => {
             return;
           }
         } catch (err) { console.warn("Auto-open after share failed:", err); }
+      }
+    }
+
+    // If the user arrived via a player-invite link, claim the player slot on that video.
+    const pendingInvite = getPendingInvite();
+    if (pendingInvite) {
+      const claimedKey = await claimInvite(pendingInvite);
+      clearInviteParam();
+      if (claimedKey) {
+        await loadMyVideos();
+        try {
+          const snap = await getDoc(doc(fbFirestore, "videos", claimedKey));
+          if (snap.exists()) {
+            await openVideo(claimedKey, snap.data());
+            return;
+          }
+        } catch (err) { console.warn("Auto-open after invite failed:", err); }
       }
     }
     goToMyVideos();
@@ -4333,6 +4462,65 @@ function clearShareParam() {
   window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
 }
 
+// ---- Incoming player-invite link: bind the recipient to a player slot on a video ----
+function getPendingInvite() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("invite");
+}
+
+function clearInviteParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("invite");
+  window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
+}
+
+async function claimInvite(token) {
+  if (!currentUser || !token) return null;
+  try {
+    const inviteRef = doc(fbFirestore, "invites", token);
+    const inviteSnap = await getDoc(inviteRef);
+    if (!inviteSnap.exists()) {
+      alert("This invite link is invalid or has been revoked.");
+      return null;
+    }
+    const inv = inviteSnap.data();
+    if (inv.claimedBy && inv.claimedBy !== currentUser.uid) {
+      alert("This invite link has already been claimed by someone else.");
+      return null;
+    }
+    if (!inv.videoKey || !inv.playerSlot) {
+      alert("This invite link is malformed.");
+      return null;
+    }
+    const videoRef = doc(fbFirestore, "videos", inv.videoKey);
+    const videoSnap = await getDoc(videoRef);
+    if (!videoSnap.exists()) {
+      alert("The video this invite points to no longer exists.");
+      return null;
+    }
+    const vdata = videoSnap.data();
+    const existing = (vdata.playerConfig && vdata.playerConfig[`player_${inv.playerSlot}`]) || { handedness: "right" };
+    const updates = {
+      [`playerConfig.player_${inv.playerSlot}`]: {
+        ...existing,
+        uid: currentUser.uid,
+        name: currentUser.displayName || existing.name || `Player ${inv.playerSlot}`,
+        email: currentUser.email || null,
+        handedness: existing.handedness || "right",
+      },
+      viewerUids: arrayUnion(currentUser.uid),
+      accessUids: arrayUnion(currentUser.uid),
+    };
+    await updateDoc(videoRef, updates);
+    await updateDoc(inviteRef, { claimedBy: currentUser.uid, claimedAt: serverTimestamp() });
+    return inv.videoKey;
+  } catch (err) {
+    console.error("claimInvite failed:", err);
+    alert(`Could not accept invite: ${err.code || err.message}`);
+    return null;
+  }
+}
+
 // ---- Incoming coach link: auto-assign the link sender as your coach after sign-in ----
 function getPendingCoachUid() {
   const params = new URLSearchParams(window.location.search);
@@ -4470,6 +4658,114 @@ uploadZone.addEventListener("drop", e => { e.preventDefault(); uploadZone.classL
 fileInput.addEventListener("change", () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
 const ACCEPTED_VIDEO_EXTS = [".mp4", ".mov"];
 const TRIAL_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 0.5 GB cap for ?trial only
+
+// Module-level handle to the in-flight upload so Start Tracking can await it.
+let uploadPromise = null;
+let uploadAbort = null;
+
+// Extract metadata + first frame from a local File using a hidden <video> element.
+// Returns { frame_b64, frame_blob, src_width, src_height, src_fps, total_frames, duration_sec }.
+// fps is measured via requestVideoFrameCallback when available; otherwise falls back to 30.
+function extractClientSideFrame(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+
+    let settled = false;
+    const cleanup = () => { try { URL.revokeObjectURL(url); } catch (e) {} };
+    const fail = (msg) => { if (settled) return; settled = true; cleanup(); reject(new Error(msg)); };
+    const ok = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
+
+    video.addEventListener("error", () => fail("Could not decode video locally"));
+    video.addEventListener("loadedmetadata", () => {
+      // Seek to t=0 to guarantee a real first frame is available.
+      try { video.currentTime = 0; } catch (e) { /* some browsers throw before metadata */ }
+    });
+    video.addEventListener("seeked", async () => {
+      const w = video.videoWidth, h = video.videoHeight, duration = video.duration || 0;
+      if (!w || !h) { fail("Video has no readable dimensions"); return; }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, w, h);
+
+      // Measure fps using requestVideoFrameCallback (sample ~8 frames). Falls back to 30.
+      let fps = 30;
+      if (typeof video.requestVideoFrameCallback === "function") {
+        try {
+          fps = await measureFpsViaCallback(video);
+        } catch (e) { /* keep 30 */ }
+      }
+
+      const total_frames = Math.max(1, Math.round(duration * fps));
+      const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+      const frame_blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+
+      ok({
+        frame_b64,
+        frame_blob,
+        src_width: w,
+        src_height: h,
+        src_fps: Math.round(fps * 100) / 100,
+        total_frames,
+        duration_sec: Math.round(duration * 100) / 100,
+      });
+    });
+  });
+}
+
+function measureFpsViaCallback(video) {
+  return new Promise((resolve) => {
+    const samples = [];
+    let lastMediaTime = null;
+    const playPromise = video.play().catch(() => {});
+    const tick = (_now, metadata) => {
+      const t = metadata.mediaTime;
+      if (lastMediaTime !== null) {
+        const dt = t - lastMediaTime;
+        if (dt > 0 && dt < 0.5) samples.push(dt);
+      }
+      lastMediaTime = t;
+      if (samples.length < 8) {
+        video.requestVideoFrameCallback(tick);
+      } else {
+        try { video.pause(); video.currentTime = 0; } catch (e) {}
+        // Median interval for robustness to outliers.
+        samples.sort((a, b) => a - b);
+        const med = samples[Math.floor(samples.length / 2)];
+        resolve(med > 0 ? 1 / med : 30);
+      }
+    };
+    Promise.resolve(playPromise).then(() => video.requestVideoFrameCallback(tick));
+    // Hard timeout in case the browser stalls.
+    setTimeout(() => resolve(30), 4000);
+  });
+}
+
+// XHR PUT to a signed URL with progress events. Returns a Promise plus an abort handle.
+function uploadViaSignedPut(signedUrl, file, onProgress) {
+  let xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
+    xhr.open("PUT", signedUrl, true);
+    xhr.setRequestHeader("Content-Type", "video/mp4");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Upload failed: HTTP ${xhr.status} ${xhr.responseText || ""}`));
+    };
+    xhr.onerror = () => reject(new Error("Upload network error"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
 async function handleFile(file) {
   const nameLower = (file.name || "").toLowerCase();
   const extOk = ACCEPTED_VIDEO_EXTS.some(ext => nameLower.endsWith(ext));
@@ -4489,8 +4785,10 @@ async function handleFile(file) {
   }
   videoBlobUrl = URL.createObjectURL(file);
 
-  // Generate video_key client-side and create the Firestore record FIRST.
-  // The doc must exist before the upload so future Storage Rules can authorize against it.
+  // Reset player-tagging state in case the user is starting a second upload in this session.
+  player1 = null; player2 = null;
+  resetPlayerPickers();
+
   videoKey = makeVideoKey(file.name);
   try {
     await createVideoDoc(videoKey, file);
@@ -4500,26 +4798,343 @@ async function handleFile(file) {
     return;
   }
 
-  // Notify backend (it still assigns a job_id; we pass our key so server and client agree).
-  const jobResp = await fetch(`${API}/api/create-job`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename: file.name, video_key: videoKey }) });
-  const jobData = await jobResp.json(); jobId = jobData.job_id;
-  firebasePath = `uploaded-videos/${videoKey}.mp4`;
-  const storageRef = ref(fbStorage, firebasePath);
-  const uploadTask = uploadBytesResumable(storageRef, file);
-  const progWrap = document.getElementById("upload-progress"), progFill = document.getElementById("upload-fill"), progText = document.getElementById("upload-text");
+  // 1) Show the local progress bar while bytes are flowing.
+  const progWrap = document.getElementById("upload-progress");
+  const progFill = document.getElementById("upload-fill");
+  const progText = document.getElementById("upload-text");
   progWrap.style.display = "block";
-  uploadTask.on("state_changed", (snap) => { const pct = (snap.bytesTransferred / snap.totalBytes * 100).toFixed(1); progFill.style.width = pct + "%"; progText.textContent = `${(snap.bytesTransferred/1e6).toFixed(1)} MB / ${(snap.totalBytes/1e6).toFixed(1)} MB (${pct}%)`; },
-    (err) => { progText.textContent = `Upload failed: ${err.message}`; progText.style.color = "var(--red)"; updateVideoStatus(videoKey, "failed"); },
-    async () => { progText.textContent = "Upload complete. Preparing video...";
-      await updateVideoStatus(videoKey, "ready");
-      const prepResp = await fetch(`${API}/api/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job_id: jobId, gcs_path: firebasePath, video_key: videoKey }) });
-      const meta = await prepResp.json(); if (meta.error) { progText.textContent = `Error: ${meta.error}`; updateVideoStatus(videoKey, "failed"); return; } videoMeta = meta; showStep("config"); });
+  progFill.style.width = "0%";
+  progText.style.color = "";
+  progText.textContent = "Reading video...";
+
+  // 2) Extract first frame + metadata client-side (no backend dependency).
+  let clientMeta;
+  try {
+    clientMeta = await extractClientSideFrame(file);
+  } catch (err) {
+    progText.textContent = `Could not read video: ${err.message}`;
+    progText.style.color = "var(--red)";
+    updateVideoStatus(videoKey, "failed");
+    return;
+  }
+  videoMeta = {
+    frame_b64: clientMeta.frame_b64,
+    src_width: clientMeta.src_width,
+    src_height: clientMeta.src_height,
+    src_fps: clientMeta.src_fps,
+    total_frames: clientMeta.total_frames,
+    duration_sec: clientMeta.duration_sec,
+  };
+
+  // 3) Move the user straight into Player Information — no waiting on backend.
+  showStep("config");
+
+  // 4) Kick off (a) the create-job call, (b) the source-video upload, and (c) the
+  //    first_frame.png upload in parallel. Start Tracking later awaits uploadPromise.
+  firebasePath = `uploaded-videos/${videoKey}.mp4`;
+  uploadAbort = null;
+  uploadPromise = (async () => {
+    const jobResp = await fetch(`${API}/api/create-job`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, video_key: videoKey }),
+    });
+    const jobData = await jobResp.json();
+    jobId = jobData.job_id;
+
+    // Signed PUT URL for direct GCS upload (faster than uploadBytesResumable for typical files).
+    const urlResp = await fetch(`${API}/api/get-upload-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: jobId, video_key: videoKey }),
+    });
+    const urlData = await urlResp.json();
+    if (!urlData.upload_url) throw new Error("Could not obtain upload URL");
+
+    firebasePath = urlData.gcs_path || firebasePath;
+
+    const fmtMb = (n) => (n / 1e6).toFixed(1);
+    const onProg = (loaded, total) => {
+      const pct = (loaded / total) * 100;
+      progFill.style.width = pct.toFixed(1) + "%";
+      progText.textContent = `${fmtMb(loaded)} MB / ${fmtMb(total)} MB (${pct.toFixed(1)}%)`;
+    };
+    try {
+      const put = uploadViaSignedPut(urlData.upload_url, file, onProg);
+      uploadAbort = put.abort;
+      await put.promise;
+    } catch (err) {
+      // Fall back to the Firebase resumable upload via firebasestorage.googleapis.com
+      // (already CORS-enabled) if signed-PUT fails.
+      console.warn("Signed-PUT upload failed, falling back to resumable upload:", err);
+      progText.textContent = "Switching upload method...";
+      progFill.style.width = "0%";
+      const storageRef = ref(fbStorage, firebasePath);
+      const task = uploadBytesResumable(storageRef, file);
+      uploadAbort = () => task.cancel();
+      await new Promise((resolve, reject) => {
+        task.on(
+          "state_changed",
+          (snap) => onProg(snap.bytesTransferred, snap.totalBytes),
+          (e) => reject(e),
+          () => resolve()
+        );
+      });
+    }
+    progFill.style.width = "100%";
+    progText.textContent = "Upload complete.";
+    await updateVideoStatus(videoKey, "ready");
+
+    // Fire-and-forget: write the client-extracted first frame to GCS so the
+    // admin landmark-tagging UI can pick it up without waiting for the GPU.
+    try {
+      if (clientMeta.frame_blob) {
+        await uploadBytes(
+          ref(fbStorage, `video-data/${videoKey}/first_frame.png`),
+          clientMeta.frame_blob,
+          { contentType: "image/jpeg" }
+        );
+      }
+    } catch (err) { console.warn("First frame upload failed:", err); }
+  })();
+
+  uploadPromise.catch((err) => {
+    console.error("Upload failed:", err);
+    progText.textContent = `Upload failed: ${err.message}`;
+    progText.style.color = "var(--red)";
+    updateVideoStatus(videoKey, "failed");
+  });
 }
 document.querySelectorAll(".hand-btn").forEach(btn => { btn.addEventListener("click", () => { const player = btn.dataset.player, hand = btn.dataset.hand; document.querySelectorAll(`.hand-btn[data-player="${player}"]`).forEach(b => b.classList.remove("selected")); btn.classList.add("selected"); if (player === "1") playerConfig.player_1.handedness = hand; else playerConfig.player_2.handedness = hand; }); });
+
+// ---- Per-player picker (search users / type free-text / mint invite link) ----
+function pickerSlot(n) {
+  return {
+    input: document.getElementById(`p${n}-name`),
+    results: document.getElementById(`p${n}-results`),
+    chip: document.getElementById(`p${n}-chip`),
+    chipName: document.getElementById(`p${n}-chip-name`),
+    chipEmail: document.getElementById(`p${n}-chip-email`),
+    chipPhoto: document.getElementById(`p${n}-photo`),
+    chipClear: document.getElementById(`p${n}-chip-clear`),
+    inviteBtn: document.getElementById(`p${n}-btn-invite`),
+    invitePanel: document.getElementById(`p${n}-invite`),
+    inviteInput: document.getElementById(`p${n}-invite-input`),
+    inviteCopy: document.getElementById(`p${n}-invite-copy`),
+  };
+}
+
+function setPlayerPick(n, { uid, displayName, email, photoURL }) {
+  const cfg = n === 1 ? playerConfig.player_1 : playerConfig.player_2;
+  cfg.uid = uid || null;
+  cfg.name = displayName || "";
+  cfg.email = email || null;
+  const s = pickerSlot(n);
+  if (uid) {
+    s.chip.style.display = "flex";
+    s.chipName.textContent = displayName || uid;
+    s.chipEmail.textContent = email || "";
+    s.chipPhoto.src = photoURL || "";
+    s.input.style.display = "none";
+    s.results.classList.remove("open");
+    s.results.innerHTML = "";
+  } else {
+    s.chip.style.display = "none";
+    s.input.style.display = "block";
+    s.input.value = displayName || "";
+  }
+}
+
+function clearPlayerPick(n) {
+  setPlayerPick(n, { uid: null, displayName: "", email: null, photoURL: null });
+  const s = pickerSlot(n);
+  s.invitePanel.style.display = "none";
+}
+
+function resetPlayerPickers() {
+  playerConfig = {
+    player_1: { name: "", handedness: "right", uid: null, email: null },
+    player_2: { name: "", handedness: "right", uid: null, email: null },
+  };
+  clearPlayerPick(1);
+  clearPlayerPick(2);
+  document.querySelectorAll("#step-config .hand-btn").forEach((b) => {
+    b.classList.toggle("selected", b.dataset.hand === "right");
+  });
+  const banner = document.getElementById("config-upload-status");
+  if (banner) { banner.style.display = "none"; banner.textContent = ""; banner.className = "upload-status-banner"; }
+}
+
+async function searchUsersByPlayerName(q) {
+  if (!q || q.length < 2) return [];
+  const lower = q.toLowerCase();
+  const qref = query(
+    collection(fbFirestore, "users"),
+    orderBy("displayName_lower"),
+    startAt(lower),
+    endAt(lower + ""),
+    limit(8)
+  );
+  const snap = await getDocs(qref);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+}
+
+function renderPickerResults(n, rows, freeText) {
+  const s = pickerSlot(n);
+  s.results.innerHTML = "";
+  const otherSlot = n === 1 ? playerConfig.player_2 : playerConfig.player_1;
+  if (rows.length === 0 && (!freeText || freeText.length < 2)) {
+    s.results.classList.remove("open");
+    return;
+  }
+  rows.forEach((u) => {
+    const row = document.createElement("div");
+    row.className = "player-picker-row";
+    const photo = document.createElement("img");
+    photo.className = "player-picker-row-photo";
+    photo.src = u.photoURL || "";
+    row.appendChild(photo);
+    const info = document.createElement("div");
+    info.className = "player-picker-row-info";
+    const nameEl = document.createElement("div");
+    nameEl.className = "player-picker-row-name";
+    nameEl.textContent = u.displayName || u.uid;
+    const emailEl = document.createElement("div");
+    emailEl.className = "player-picker-row-email";
+    emailEl.textContent = u.email || "";
+    info.appendChild(nameEl); info.appendChild(emailEl);
+    row.appendChild(info);
+    if (otherSlot.uid && otherSlot.uid === u.uid) {
+      row.classList.add("disabled");
+      const tag = document.createElement("span");
+      tag.className = "coach-result-tag";
+      tag.textContent = "Other player";
+      row.appendChild(tag);
+    } else {
+      row.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        setPlayerPick(n, { uid: u.uid, displayName: u.displayName, email: u.email, photoURL: u.photoURL });
+      });
+    }
+    s.results.appendChild(row);
+  });
+  if (freeText && freeText.length >= 2) {
+    const row = document.createElement("div");
+    row.className = "player-picker-row";
+    const info = document.createElement("div");
+    info.className = "player-picker-row-info";
+    const nameEl = document.createElement("div");
+    nameEl.className = "player-picker-row-name";
+    nameEl.textContent = `Use "${freeText}" as a tag`;
+    const emailEl = document.createElement("div");
+    emailEl.className = "player-picker-row-email";
+    emailEl.textContent = "No account — just a label on this video";
+    info.appendChild(nameEl); info.appendChild(emailEl);
+    row.appendChild(info);
+    row.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const cfg = n === 1 ? playerConfig.player_1 : playerConfig.player_2;
+      cfg.name = freeText;
+      cfg.uid = null;
+      cfg.email = null;
+      pickerSlot(n).results.classList.remove("open");
+    });
+    s.results.appendChild(row);
+  }
+  if (s.results.children.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "player-picker-empty";
+    empty.textContent = "No users match. Keep typing to use as a tag.";
+    s.results.appendChild(empty);
+  }
+  s.results.classList.add("open");
+}
+
+const pickerTimers = { 1: null, 2: null };
+function wirePicker(n) {
+  const s = pickerSlot(n);
+  s.input.addEventListener("input", () => {
+    const q = s.input.value.trim();
+    const cfg = n === 1 ? playerConfig.player_1 : playerConfig.player_2;
+    cfg.name = q;
+    cfg.uid = null;
+    clearTimeout(pickerTimers[n]);
+    pickerTimers[n] = setTimeout(async () => {
+      let rows = [];
+      if (q.length >= 2) {
+        try { rows = await searchUsersByPlayerName(q); }
+        catch (err) { console.warn("user search failed:", err); }
+      }
+      renderPickerResults(n, rows, q);
+    }, 200);
+  });
+  s.input.addEventListener("focus", () => {
+    const q = s.input.value.trim();
+    if (q.length >= 2) {
+      searchUsersByPlayerName(q).then((rows) => renderPickerResults(n, rows, q)).catch(() => {});
+    }
+  });
+  s.input.addEventListener("blur", () => {
+    // Defer so a result click can register before we close.
+    setTimeout(() => s.results.classList.remove("open"), 120);
+  });
+  s.chipClear.addEventListener("click", () => clearPlayerPick(n));
+  s.inviteBtn.addEventListener("click", () => createInviteForPlayer(n));
+  s.inviteCopy.addEventListener("click", async () => {
+    const url = s.inviteInput.value;
+    try { await navigator.clipboard.writeText(url); s.inviteCopy.textContent = "Copied!"; setTimeout(() => (s.inviteCopy.textContent = "Copy"), 1500); }
+    catch (e) { s.inviteInput.select(); s.inviteInput.setSelectionRange(0, url.length); }
+  });
+}
+wirePicker(1);
+wirePicker(2);
+
+async function createInviteForPlayer(n) {
+  if (!videoKey || !currentUser) return;
+  const s = pickerSlot(n);
+  s.inviteBtn.disabled = true;
+  s.inviteBtn.textContent = "Creating link...";
+  try {
+    const token = crypto.randomUUID().replace(/-/g, "");
+    await setDoc(doc(fbFirestore, "invites", token), {
+      videoKey,
+      playerSlot: n,
+      createdBy: currentUser.uid,
+      createdAt: serverTimestamp(),
+      claimedBy: null,
+    });
+    const url = `${window.location.origin}/?invite=${encodeURIComponent(token)}`;
+    s.inviteInput.value = url;
+    s.invitePanel.style.display = "flex";
+    s.inviteBtn.textContent = "Send invite link";
+  } catch (err) {
+    console.error("createInvite failed:", err);
+    alert(`Could not create invite: ${err.code || err.message}`);
+    s.inviteBtn.textContent = "Send invite link";
+  } finally {
+    s.inviteBtn.disabled = false;
+  }
+}
+
+function showConfigUploadStatus(text, kind) {
+  const banner = document.getElementById("config-upload-status");
+  if (!banner) return;
+  banner.style.display = "block";
+  banner.className = "upload-status-banner" + (kind ? " " + kind : "");
+  banner.textContent = text;
+}
+
 document.getElementById("btn-continue-config").addEventListener("click", async () => {
-  playerConfig.player_1.name = document.getElementById("p1-name").value.trim() || "Player 1";
-  playerConfig.player_2.name = document.getElementById("p2-name").value.trim() || "Player 2";
-  console.log("Saving player config:", { video_key: videoKey, player_1_name: playerConfig.player_1.name, player_2_name: playerConfig.player_2.name });
+  // Finalize names from the input boxes if no chip was chosen.
+  for (const n of [1, 2]) {
+    const cfg = n === 1 ? playerConfig.player_1 : playerConfig.player_2;
+    if (!cfg.uid) {
+      const v = document.getElementById(`p${n}-name`).value.trim();
+      cfg.name = v || `Player ${n}`;
+    }
+  }
+
+  console.log("Saving player config:", { video_key: videoKey, player_1: playerConfig.player_1, player_2: playerConfig.player_2 });
   try {
     const resp = await fetch(`${API}/api/player-config`, {
       method: "POST",
@@ -4528,14 +5143,33 @@ document.getElementById("btn-continue-config").addEventListener("click", async (
         video_key: videoKey,
         player_1_name: playerConfig.player_1.name,
         player_1_handedness: playerConfig.player_1.handedness,
+        player_1_uid: playerConfig.player_1.uid || null,
         player_2_name: playerConfig.player_2.name,
-        player_2_handedness: playerConfig.player_2.handedness
+        player_2_handedness: playerConfig.player_2.handedness,
+        player_2_uid: playerConfig.player_2.uid || null,
       })
     });
     const result = await resp.json();
     if (result.error) { console.error("Player config save error:", result.error); }
     else { console.log("Player config saved successfully:", result); }
   } catch (err) { console.error("Failed to save player config:", err); }
+
+  // Grant access to picked users so they can see this video.
+  try {
+    const newUids = [playerConfig.player_1.uid, playerConfig.player_2.uid]
+      .filter((u) => u && u !== currentUser.uid);
+    if (newUids.length > 0) {
+      const updates = {
+        viewerUids: arrayUnion(...newUids),
+        accessUids: arrayUnion(...newUids),
+        playerConfig,
+      };
+      await updateDoc(doc(fbFirestore, "videos", videoKey), updates);
+    } else {
+      await updateDoc(doc(fbFirestore, "videos", videoKey), { playerConfig });
+    }
+  } catch (err) { console.warn("playerConfig persist failed:", err); }
+
   setupFrameSelection(videoMeta);
   showStep("select");
 });
@@ -4568,8 +5202,43 @@ async function startProcessing() {
   }
 
   showStep("process"); processingStartTime = Date.now(); totalSrcFrames = videoMeta.total_frames; completedSrcFrames = 0;
-  document.getElementById("preview-video").src = videoBlobUrl; updateOverallProgress(0, "Connecting...");
+  document.getElementById("preview-video").src = videoBlobUrl;
   updateVideoStatus(videoKey, "processing");
+
+  // Block until the source video upload finishes, then run /api/prepare (CPU-only ffprobe).
+  if (uploadPromise) {
+    updateOverallProgress(0, "Finishing upload...");
+    try {
+      await uploadPromise;
+    } catch (err) {
+      updateOverallProgress(0, `Upload failed: ${err.message}`);
+      updateVideoStatus(videoKey, "failed");
+      return;
+    }
+  }
+  updateOverallProgress(0, "Preparing video on server...");
+  try {
+    const prepResp = await fetch(`${API}/api/prepare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: jobId, gcs_path: firebasePath, video_key: videoKey, skip_first_frame: true }),
+    });
+    const meta = await prepResp.json();
+    if (meta.error) {
+      updateOverallProgress(0, `Error: ${meta.error}`);
+      updateVideoStatus(videoKey, "failed");
+      return;
+    }
+    // Prefer backend-derived metadata for the websocket payload (handles VFR / rotation).
+    if (meta.src_width) videoMeta = { ...videoMeta, ...meta };
+    totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+  } catch (err) {
+    updateOverallProgress(0, `Prepare failed: ${err.message}`);
+    updateVideoStatus(videoKey, "failed");
+    return;
+  }
+
+  updateOverallProgress(0, "Connecting...");
   const wsUrl = `${API.replace("http", "ws")}/ws/${jobId}`; ws = new WebSocket(wsUrl);
   ws.onopen = () => { updateOverallProgress(0, "Connected. Starting tracking..."); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: videoKey })); };
   ws.onmessage = (e) => handleWsMessage(JSON.parse(e.data));
