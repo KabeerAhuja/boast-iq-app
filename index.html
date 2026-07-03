@@ -3224,7 +3224,7 @@
   const __params = new URLSearchParams(location.search);
   window.__IS_DEMO__ = __params.has('demo');
   window.__IS_TRIAL__ = __params.has('trial');
-  window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_bd3550c0_2026-07-03_14-05-58';
+  window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
   if (window.__IS_DEMO__) document.body.classList.add('demo-mode');
   if (window.__IS_TRIAL__) document.body.classList.add('trial-mode');
 </script>
@@ -9121,10 +9121,10 @@ if (window.__IS_DEMO__) {
         console.warn("[DEMO] source video URL fetch failed:", err);
         videoBlobUrl = null;
       }
-      // Use the Egyptian/Conrad labels that match the source dataset
+      // Fallback labels shown before index.json loads (match the source dataset)
       playerConfig = {
         player_1: { name: "Conrad", handedness: "right" },
-        player_2: { name: "Egyptian", handedness: "right" }
+        player_2: { name: "Mahim", handedness: "left" }
       };
       showStep("results");
       showResults({});
