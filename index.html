@@ -609,7 +609,103 @@
     background: #000;
     margin-bottom: 28px;
   }
-  
+
+  /* Mark Games step */
+  .mg-readouts {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+  }
+  .mg-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  #mg-timeline {
+    position: relative;
+    width: 100%;
+    height: 40px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 18px;
+    overflow: hidden;
+  }
+  #mg-segments {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  #mg-segments .seg {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    background: linear-gradient(90deg, rgba(59,130,246,0.55), rgba(59,130,246,0.85));
+    border: 1px solid #3b82f6;
+    border-radius: 4px;
+    color: #fff;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  }
+  #mg-segments .seg.pending {
+    background: linear-gradient(90deg, rgba(240,160,48,0.55), rgba(240,160,48,0.85));
+    border-color: #f0a030;
+  }
+  #mg-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #fff;
+    pointer-events: none;
+    left: 0;
+  }
+  .mg-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 22px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .mg-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .mg-list .mg-remove {
+    appearance: none;
+    background: transparent;
+    border: 1px solid rgba(201,52,74,0.4);
+    color: #C9344A;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .mg-list .mg-remove:hover {
+    background: #C9344A;
+    color: #fff;
+  }
+
   /* Overall Progress */
   .overall-progress {
     background: var(--surface);
@@ -2951,6 +3047,7 @@
   body.demo-mode .header,
   body.demo-mode #login-overlay,
   body.demo-mode #step-profile,
+  body.demo-mode #step-mark-games,
   body.demo-mode #step-videos,
   body.demo-mode #step-upload,
   body.demo-mode #step-config,
@@ -3035,6 +3132,7 @@
   /* ===== Trial mode: anonymous-auth upload + view ===== */
   body.trial-mode #login-overlay,
   body.trial-mode #step-profile,
+  body.trial-mode #step-mark-games,
   body.trial-mode #step-videos,
   body.trial-mode #btn-back-to-videos,
   body.trial-mode #btn-manage-coach,
@@ -3524,6 +3622,31 @@
     <div class="btn-row"><button class="btn btn-primary" id="btn-continue-config">Continue →</button></div>
   </div>
 
+  <!-- Step 2.5: Mark Games -->
+  <div id="step-mark-games" class="step">
+    <div class="step-label">Step 3</div>
+    <div class="step-title">Mark Games</div>
+    <div class="step-desc">Scrub through the video, then mark the start and end frame of each game. Squash matches are up to 5 games — mark each one. If your video is just a single game, hit "This is one game" to skip.</div>
+    <video id="mg-video" class="video-preview" controls preload="metadata" muted playsinline></video>
+    <div class="mg-readouts">
+      <span id="mg-time">0.00 / 0.00s</span>
+      <span id="mg-frame">frame 0 / 0</span>
+    </div>
+    <div class="mg-actions">
+      <button class="btn btn-primary" id="mg-mark-start" type="button">Mark Game 1 Start</button>
+      <button class="btn btn-primary" id="mg-mark-end" type="button" disabled>Mark Game 1 End</button>
+    </div>
+    <div id="mg-timeline">
+      <div id="mg-segments"></div>
+      <div id="mg-playhead"></div>
+    </div>
+    <ul id="mg-list" class="mg-list"></ul>
+    <div class="btn-row" style="justify-content: space-between;">
+      <button class="btn btn-secondary" id="mg-skip" type="button">This is one game</button>
+      <button class="btn btn-primary" id="mg-continue" type="button" disabled>Continue → Select Players</button>
+    </div>
+  </div>
+
   <!-- Step 3: Select Players -->
   <div id="step-select" class="step">
     <div class="step-label">Step 3</div>
@@ -3709,6 +3832,49 @@ function makeVideoKey(filename) {
   const pad = (n) => String(n).padStart(2, "0");
   const ts = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}_${pad(d.getUTCHours())}-${pad(d.getUTCMinutes())}-${pad(d.getUTCSeconds())}`;
   return `${sanitized}_${shortId}_${ts}`;
+}
+
+// Per-game video_key: the parent upload's key + a __gN suffix. Guarantees
+// per-video-key storage isolation (video-data/{baseKey}__g1/...) and makes
+// the parent relationship obvious in queries.
+function makeGameVideoKey(baseKey, gameIdx) {
+  return `${baseKey}__g${gameIdx}`;
+}
+
+// Extract a JPEG base64 frame from the local video file at a given time (seconds).
+// Reuses the same hidden-<video>+canvas pattern as extractClientSideFrame but
+// seeks to a specific point instead of just t=0. Used to show the correct
+// start-of-game frame during per-game Select Players.
+function extractFrameAtSec(sec) {
+  return new Promise((resolve, reject) => {
+    if (!videoBlobUrl) { reject(new Error("No local video to read from")); return; }
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = videoBlobUrl;
+
+    let settled = false;
+    const fail = (msg) => { if (settled) return; settled = true; reject(new Error(msg)); };
+    const ok = (val) => { if (settled) return; settled = true; resolve(val); };
+
+    video.addEventListener("error", () => fail("Could not decode video locally"));
+    video.addEventListener("loadedmetadata", () => {
+      const clamped = Math.max(0, Math.min(sec, (video.duration || sec) - 0.05));
+      try { video.currentTime = clamped; } catch (e) {}
+    });
+    video.addEventListener("seeked", () => {
+      const w = video.videoWidth, h = video.videoHeight;
+      if (!w || !h) { fail("Video has no readable dimensions"); return; }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, w, h);
+      const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+      ok({ frame_b64, src_width: w, src_height: h });
+    });
+    setTimeout(() => fail("Frame extraction timed out"), 8000);
+  });
 }
 
 async function ensureUserDoc(user) {
@@ -4020,11 +4186,20 @@ let repromptP1 = null, repromptP2 = null;
 let videoBlobUrl = null;
 let playerConfig = { player_1: { name: "Player 1", handedness: "right" }, player_2: { name: "Player 2", handedness: "right" } };
 let totalSrcFrames = 0, completedSrcFrames = 0, currentSegSrcStart = 0, currentSegSrcFrames = 0, currentSegPct = 0, processingStartTime = 0;
+
+// ---- Multi-game segmentation state ----
+let gameSegments = [];              // [{startFrame, endFrame, startSec, endSec}, ...]
+let pendingSegmentStart = null;     // {frame, sec} while waiting for end mark
+let perGamePlayerPositions = [];    // index-aligned to gameSegments: [{player1:[x,y], player2:[x,y]}, ...]
+let currentGameForPlayerClick = 0;  // loop index during per-game Select Players
+let parentVideoKey = null;          // base key from makeVideoKey (physical upload)
+let originalFileName = null;        // preserved for "Match — Game N" titles
+let gameVideoKeys = [];             // per-game video_keys spawned
 // Modal backend URL — set before deploy.
 // Find your workspace name from `modal config show` or the Modal dashboard.
 // Format: https://<workspace>--boastiq-tracker-web.modal.run
 const API = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
-const $steps = { videos: document.getElementById("step-videos"), upload: document.getElementById("step-upload"), config: document.getElementById("step-config"), select: document.getElementById("step-select"), process: document.getElementById("step-process"), results: document.getElementById("step-results"), coachDashboard: document.getElementById("step-coach-dashboard"), profile: document.getElementById("step-profile") };
+const $steps = { videos: document.getElementById("step-videos"), upload: document.getElementById("step-upload"), config: document.getElementById("step-config"), markGames: document.getElementById("step-mark-games"), select: document.getElementById("step-select"), process: document.getElementById("step-process"), results: document.getElementById("step-results"), coachDashboard: document.getElementById("step-coach-dashboard"), profile: document.getElementById("step-profile") };
 const btnBackToVideos = document.getElementById("btn-back-to-videos");
 function showStep(name) {
   Object.values($steps).forEach(s => s.classList.remove("active"));
@@ -4073,7 +4248,11 @@ async function loadMyVideos() {
     );
     const snap = await getDocs(q);
     loading.style.display = "none";
-    myVideosCache = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+    // Drop parent docs of multi-game uploads (hiddenFromList) so users only
+    // see the per-game cards in My Videos. Their per-game docs stay visible.
+    myVideosCache = snap.docs
+      .map((d) => ({ id: d.id, data: d.data() }))
+      .filter(({ data }) => !data.hiddenFromList);
     await renderMyVideosFiltered();
   } catch (err) {
     console.error("loadMyVideos failed:", err);
@@ -5165,12 +5344,19 @@ async function handleFile(file) {
     localStorage.setItem("boastiq_trial_used", "1");
   }
   videoBlobUrl = URL.createObjectURL(file);
+  originalFileName = file.name;
 
   // Reset player-tagging state in case the user is starting a second upload in this session.
   player1 = null; player2 = null;
   resetPlayerPickers();
+  // Reset multi-game state for this fresh upload
+  gameSegments = [];
+  pendingSegmentStart = null;
+  perGamePlayerPositions = [];
+  gameVideoKeys = [];
 
   videoKey = makeVideoKey(file.name);
+  parentVideoKey = videoKey;
   try {
     await createVideoDoc(videoKey, file);
   } catch (err) {
@@ -5606,8 +5792,10 @@ document.getElementById("btn-continue-config").addEventListener("click", async (
     }
   } catch (err) { console.warn("playerConfig persist failed:", err); }
 
-  setupFrameSelection(videoMeta);
-  showStep("select");
+  // Route to Mark Games first — user marks up to 5 segments, or hits "This is
+  // one game" to skip straight to a single Select Players pass.
+  initMarkGames();
+  showStep("markGames");
 });
 function setupFrameSelection(meta) {
   document.getElementById("player-names-display").innerHTML = `<span class="p1-name">${playerConfig.player_1.name} (${playerConfig.player_1.handedness[0].toUpperCase()})</span><span class="p2-name">${playerConfig.player_2.name} (${playerConfig.player_2.handedness[0].toUpperCase()})</span>`;
@@ -5624,8 +5812,357 @@ function drawFrame(ctx, img) { ctx.drawImage(img, 0, 0); if (player1) drawPoint(
 function drawPoint(ctx, pt, color, label) { ctx.beginPath(); ctx.arc(pt[0], pt[1], 14, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.stroke(); ctx.shadowColor = color; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = "#fff"; ctx.font = "bold 14px Inter"; ctx.fillText(label, pt[0] + 20, pt[1] + 5); }
 function updatePointBadges() { const b1 = document.getElementById("p1-badge"), b2 = document.getElementById("p2-badge"); const p1Label = playerConfig.player_1.name.substring(0, 10), p2Label = playerConfig.player_2.name.substring(0, 10); b1.textContent = player1 ? `${p1Label}: (${player1[0]}, ${player1[1]})` : `${p1Label}: not set`; b1.className = `point-badge p1 ${player1 ? "set" : "unset"}`; b2.textContent = player2 ? `${p2Label}: (${player2[0]}, ${player2[1]})` : `${p2Label}: not set`; b2.className = `point-badge p2 ${player2 ? "set" : "unset"}`; document.getElementById("btn-start").disabled = !(player1 && player2); }
 document.getElementById("btn-reset-pts").addEventListener("click", () => { player1 = null; player2 = null; drawFrame(document.getElementById("frame-canvas").getContext("2d"), frameImage); updatePointBadges(); });
-document.getElementById("btn-start").addEventListener("click", startProcessing);
+document.getElementById("btn-start").addEventListener("click", onSelectStartClick);
 document.getElementById("btn-new-upload").addEventListener("click", () => showStep("upload"));
+
+// ===========================================================================
+// Mark Games step: scrub to game start/end, capture up to 5 segments.
+// ===========================================================================
+const mgVideo = document.getElementById("mg-video");
+const mgTimeEl = document.getElementById("mg-time");
+const mgFrameEl = document.getElementById("mg-frame");
+const mgMarkStartBtn = document.getElementById("mg-mark-start");
+const mgMarkEndBtn = document.getElementById("mg-mark-end");
+const mgTimeline = document.getElementById("mg-timeline");
+const mgSegmentsEl = document.getElementById("mg-segments");
+const mgPlayhead = document.getElementById("mg-playhead");
+const mgListEl = document.getElementById("mg-list");
+const mgContinueBtn = document.getElementById("mg-continue");
+const mgSkipBtn = document.getElementById("mg-skip");
+
+function initMarkGames() {
+  gameSegments = [];
+  pendingSegmentStart = null;
+  perGamePlayerPositions = [];
+  gameVideoKeys = [];
+  mgVideo.src = videoBlobUrl || "";
+  mgVideo.load();
+  refreshMgUi();
+}
+
+mgVideo.addEventListener("timeupdate", updateMgPlayhead);
+mgVideo.addEventListener("loadedmetadata", updateMgReadouts);
+mgVideo.addEventListener("timeupdate", updateMgReadouts);
+
+function updateMgPlayhead() {
+  const dur = mgVideo.duration || (videoMeta.duration_sec || 0);
+  if (!dur || !isFinite(dur)) { mgPlayhead.style.left = "0"; return; }
+  const pct = (mgVideo.currentTime / dur) * 100;
+  mgPlayhead.style.left = `calc(${pct}% - 1px)`;
+}
+
+function updateMgReadouts() {
+  const dur = mgVideo.duration || (videoMeta.duration_sec || 0);
+  const fps = videoMeta.src_fps || 30;
+  const totalFrames = videoMeta.total_frames || Math.round(dur * fps);
+  const t = mgVideo.currentTime || 0;
+  const frame = Math.round(t * fps);
+  mgTimeEl.textContent = `${t.toFixed(2)} / ${dur.toFixed(2)}s`;
+  mgFrameEl.textContent = `frame ${frame} / ${totalFrames}`;
+}
+
+mgTimeline.addEventListener("click", (e) => {
+  const rect = mgTimeline.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const dur = mgVideo.duration || (videoMeta.duration_sec || 0);
+  if (dur) mgVideo.currentTime = pct * dur;
+});
+
+mgMarkStartBtn.addEventListener("click", () => {
+  const fps = videoMeta.src_fps || 30;
+  const sec = mgVideo.currentTime || 0;
+  const frame = Math.round(sec * fps);
+  pendingSegmentStart = { sec, frame };
+  refreshMgUi();
+});
+
+mgMarkEndBtn.addEventListener("click", () => {
+  if (!pendingSegmentStart) return;
+  const fps = videoMeta.src_fps || 30;
+  const endSec = mgVideo.currentTime || 0;
+  const endFrame = Math.round(endSec * fps);
+  if (endFrame <= pendingSegmentStart.frame) {
+    alert("End must be after start. Scrub forward before marking end.");
+    return;
+  }
+  // Overlap check: no new segment can straddle an existing one
+  const s = pendingSegmentStart.frame, e = endFrame;
+  const overlap = gameSegments.some((g) => (s < g.endFrame && e > g.startFrame));
+  if (overlap) {
+    alert("This segment overlaps an existing game. Adjust the start or end.");
+    return;
+  }
+  gameSegments.push({
+    startFrame: pendingSegmentStart.frame,
+    endFrame,
+    startSec: pendingSegmentStart.sec,
+    endSec,
+  });
+  gameSegments.sort((a, b) => a.startFrame - b.startFrame);
+  pendingSegmentStart = null;
+  refreshMgUi();
+});
+
+mgSkipBtn.addEventListener("click", async () => {
+  const dur = videoMeta.duration_sec || mgVideo.duration || 0;
+  const total = videoMeta.total_frames || Math.round(dur * (videoMeta.src_fps || 30));
+  gameSegments = [{ startFrame: 0, endFrame: total, startSec: 0, endSec: dur }];
+  await beginPlayerClickForGame(0);
+});
+
+mgContinueBtn.addEventListener("click", async () => {
+  if (gameSegments.length === 0) return;
+  await beginPlayerClickForGame(0);
+});
+
+async function beginPlayerClickForGame(idx) {
+  currentGameForPlayerClick = idx;
+  player1 = null; player2 = null;
+  const seg = gameSegments[idx];
+
+  // Show a loading state on the mark-games "Continue" button since frame
+  // extraction from a big video can take a second on mobile.
+  const savedLabel = mgContinueBtn.textContent;
+  mgContinueBtn.disabled = true;
+  mgContinueBtn.textContent = "Loading frame...";
+
+  let frame_b64;
+  try {
+    const res = await extractFrameAtSec(seg.startSec);
+    frame_b64 = res.frame_b64;
+  } catch (err) {
+    console.warn("Frame extract failed, falling back to first frame:", err);
+    frame_b64 = videoMeta.frame_b64;  // Fallback to the frame we already have
+  } finally {
+    mgContinueBtn.disabled = false;
+    mgContinueBtn.textContent = savedLabel;
+  }
+
+  videoMeta = { ...videoMeta, frame_b64 };
+
+  // Title and button labels depend on total game count
+  const titleEl = document.querySelector("#step-select .step-title");
+  const btnStart = document.getElementById("btn-start");
+  if (titleEl) {
+    titleEl.textContent = gameSegments.length === 1
+      ? "Select Players"
+      : `Select Players — Game ${idx + 1} of ${gameSegments.length}`;
+  }
+  if (btnStart) {
+    if (gameSegments.length === 1) {
+      btnStart.textContent = "Start Tracking →";
+    } else if (idx + 1 < gameSegments.length) {
+      btnStart.textContent = `Confirm Game ${idx + 1} Players →`;
+    } else {
+      btnStart.textContent = "Start Tracking All Games →";
+    }
+  }
+
+  setupFrameSelection(videoMeta);
+  showStep("select");
+}
+
+async function onSelectStartClick() {
+  if (!player1 || !player2) return;
+  // Multi-game path
+  if (gameSegments && gameSegments.length > 0) {
+    perGamePlayerPositions[currentGameForPlayerClick] = { player1, player2 };
+    if (currentGameForPlayerClick + 1 < gameSegments.length) {
+      await beginPlayerClickForGame(currentGameForPlayerClick + 1);
+    } else {
+      await spawnGameJobs();
+    }
+    return;
+  }
+  // Fallback (shouldn't happen, but keeps old single-game path alive if
+  // markGames step is somehow skipped): treat whole video as one game.
+  await startProcessing();
+}
+
+// Spawn N parallel tracking jobs — one per game segment. Each game gets its
+// own video_key, its own Firestore doc, its own job_id, and its own
+// WebSocket. All share the same GCS source upload (firebasePath).
+async function spawnGameJobs() {
+  // Await the single upload + prepare that started during handleFile.
+  const btnStart = document.getElementById("btn-start");
+  if (btnStart) { btnStart.disabled = true; btnStart.textContent = "Finishing upload…"; }
+  try {
+    if (uploadPromise) await uploadPromise;
+  } catch (err) {
+    alert(`Upload failed: ${err.message || err}`);
+    if (btnStart) { btnStart.disabled = false; btnStart.textContent = "Start Tracking →"; }
+    return;
+  }
+  if (btnStart) btnStart.textContent = "Preparing video…";
+  try {
+    if (preparePromise) await preparePromise;
+  } catch (err) {
+    alert(`Prepare failed: ${err.message || err}`);
+    if (btnStart) { btnStart.disabled = false; btnStart.textContent = "Start Tracking →"; }
+    return;
+  }
+  if (btnStart) btnStart.textContent = "Spawning game jobs…";
+
+  const isSingleGame = gameSegments.length === 1;
+  gameVideoKeys = [];
+  const baseName = (originalFileName || "Match").replace(/\.[^.]+$/, "");
+
+  // Spawn all games concurrently.
+  await Promise.all(gameSegments.map(async (seg, i) => {
+    // Single-game skip path reuses the parent video_key so the user keeps a
+    // clean library entry (no __g1 suffix, no hidden parent doc). Multi-game
+    // path uses per-game keys and hides the parent.
+    const gvk = isSingleGame ? parentVideoKey : makeGameVideoKey(parentVideoKey, i + 1);
+    gameVideoKeys.push(gvk);
+
+    if (!isSingleGame) {
+      // Create a fresh video doc for this game. `title` gets the "— Game N"
+      // suffix so it's obvious in My Videos.
+      try {
+        await createVideoDoc(gvk, { name: `${baseName} — Game ${i + 1}` });
+      } catch (err) {
+        console.error(`createVideoDoc failed for ${gvk}:`, err);
+      }
+    }
+
+    // Persist per-game metadata (playerConfig + trim range + game index).
+    try {
+      await updateDoc(doc(fbFirestore, "videos", gvk), {
+        playerConfig,
+        status: "processing",
+        parentVideoKey,
+        gameIndex: i + 1,
+        gameCount: gameSegments.length,
+        trimStartFrame: seg.startFrame,
+        trimEndFrame: seg.endFrame,
+      });
+    } catch (err) { console.warn("game doc updateDoc failed:", err); }
+
+    // Get a fresh job_id for this game.
+    const jr = await fetch(`${API}/api/create-job`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: originalFileName || "video.mp4", video_key: gvk }),
+    });
+    const { job_id: gameJobId } = await jr.json();
+
+    // Kick off prepare_job for this game's job_id (same source.mp4 downloaded
+    // into a fresh scratch dir keyed by job_id — see Modal_app.py prepare_job).
+    try {
+      await fetch(`${API}/api/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_id: gameJobId,
+          gcs_path: firebasePath,
+          video_key: gvk,
+          skip_first_frame: true,
+        }),
+      });
+    } catch (err) { console.warn("per-game prepare failed:", err); }
+
+    // Open a per-game WebSocket. The backend will run tracking bounded by
+    // trim_start_frame / trim_end_frame. We attach minimal handlers to update
+    // Firestore status; the user is returned to My Videos and each card
+    // reflects progress via that status.
+    const gws = new WebSocket(`${API.replace("http", "ws")}/ws/${gameJobId}`);
+    gws.onopen = () => {
+      gws.send(JSON.stringify({
+        type: "start_processing",
+        player_1: perGamePlayerPositions[i].player1,
+        player_2: perGamePlayerPositions[i].player2,
+        src_width: videoMeta.src_width,
+        src_height: videoMeta.src_height,
+        src_fps: videoMeta.src_fps,
+        total_frames: videoMeta.total_frames,
+        gcs_path: firebasePath,
+        video_key: gvk,
+        trim_start_frame: seg.startFrame,
+        trim_end_frame: seg.endFrame,
+      }));
+    };
+    gws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (_) { return; }
+      if (msg.type === "complete") {
+        updateVideoStatus(gvk, "complete");
+        try { gws.close(); } catch (_) {}
+      } else if (msg.type === "error") {
+        updateVideoStatus(gvk, "failed");
+        try { gws.close(); } catch (_) {}
+      }
+    };
+    gws.onerror = (err) => console.warn(`WS error for game ${i + 1}:`, err);
+  }));
+
+  // Multi-game: hide the parent doc so users only see the per-game cards.
+  if (!isSingleGame && parentVideoKey) {
+    try {
+      await updateDoc(doc(fbFirestore, "videos", parentVideoKey), {
+        status: "segmented",
+        replacedByGames: gameVideoKeys,
+        hiddenFromList: true,
+      });
+    } catch (err) { console.warn("parent doc hide failed:", err); }
+  }
+
+  goToMyVideos();
+}
+
+function refreshMgUi() {
+  const dur = mgVideo.duration || (videoMeta.duration_sec || 0) || 1;
+
+  // Segment bars on timeline
+  mgSegmentsEl.innerHTML = "";
+  gameSegments.forEach((g, i) => {
+    const bar = document.createElement("div");
+    bar.className = "seg";
+    const leftPct = (g.startSec / dur) * 100;
+    const widthPct = ((g.endSec - g.startSec) / dur) * 100;
+    bar.style.left = `${leftPct}%`;
+    bar.style.width = `${widthPct}%`;
+    bar.textContent = `G${i + 1}`;
+    mgSegmentsEl.appendChild(bar);
+  });
+  if (pendingSegmentStart) {
+    // Show pending start as a thin marker until end is captured
+    const bar = document.createElement("div");
+    bar.className = "seg pending";
+    const leftPct = (pendingSegmentStart.sec / dur) * 100;
+    bar.style.left = `${leftPct}%`;
+    bar.style.width = `4px`;
+    bar.textContent = "";
+    mgSegmentsEl.appendChild(bar);
+  }
+
+  // List
+  mgListEl.innerHTML = "";
+  gameSegments.forEach((g, i) => {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `Game ${i + 1} — ${g.startSec.toFixed(2)}s → ${g.endSec.toFixed(2)}s (${g.endFrame - g.startFrame} frames)`;
+    li.appendChild(label);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mg-remove";
+    btn.textContent = "Remove";
+    btn.addEventListener("click", () => {
+      gameSegments.splice(i, 1);
+      refreshMgUi();
+    });
+    li.appendChild(btn);
+    mgListEl.appendChild(li);
+  });
+
+  // Button states
+  const nextGameNum = gameSegments.length + 1;
+  const atMax = gameSegments.length >= 5;
+  mgMarkStartBtn.textContent = `Mark Game ${Math.min(nextGameNum, 5)} Start`;
+  mgMarkEndBtn.textContent = `Mark Game ${Math.min(nextGameNum, 5)} End`;
+  mgMarkStartBtn.disabled = !!pendingSegmentStart || atMax;
+  mgMarkEndBtn.disabled = !pendingSegmentStart;
+  mgContinueBtn.disabled = gameSegments.length === 0;
+}
 async function startProcessing() {
   // Upload thumbnail (current frame canvas with player dots drawn) and persist player config to Firestore.
   // Fire-and-forget: don't block processing on thumbnail upload.
@@ -8335,6 +8872,7 @@ async function loadCalendarMonth() {
     calVideosByDay = new Map();
     snap.docs.forEach((d) => {
       const data = d.data();
+      if (data.hiddenFromList) return;  // Skip parent docs of segmented uploads
       const ts = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
       if (!ts) return;
       if (ts.getFullYear() !== calMonth.getFullYear() || ts.getMonth() !== calMonth.getMonth()) return;
