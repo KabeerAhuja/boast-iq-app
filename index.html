@@ -2414,6 +2414,99 @@
     overflow: hidden;
   }
 
+  /* Match group card — parent card for multi-game uploads */
+  .video-card.match-group.expanded {
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+    border-color: var(--border-bright);
+  }
+  .match-group-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 3;
+    background: rgba(59, 130, 246, 0.85);
+    color: #fff;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+  }
+  .match-group-chevron {
+    display: inline-block;
+    font-size: 12px;
+    margin-left: 8px;
+    color: var(--text-dim);
+    transition: transform 0.2s ease;
+  }
+  .video-card.match-group.expanded .match-group-chevron {
+    transform: rotate(180deg);
+    color: var(--accent);
+  }
+  .match-games-list {
+    display: none;
+    padding: 0 16px 16px 16px;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .video-card.match-group.expanded .match-games-list {
+    display: flex;
+  }
+  .match-game-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  }
+  .match-game-row:hover {
+    background: var(--surface);
+    border-color: var(--accent);
+    transform: translateX(2px);
+  }
+  .match-game-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+  }
+  .match-game-status {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+  }
+  .match-game-status.processing {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+  }
+  .match-game-status.complete {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(74, 222, 128, 0.4);
+  }
+  .match-game-status.failed {
+    background: rgba(201, 52, 74, 0.15);
+    color: #C9344A;
+    border: 1px solid rgba(201, 52, 74, 0.4);
+  }
+  .match-game-arrow {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  .match-game-row:hover .match-game-arrow { color: var(--accent); }
+
   .video-card:hover {
     transform: translateY(-4px);
     border-color: var(--border-bright);
@@ -4456,8 +4549,150 @@ async function renderMyVideosFiltered() {
     return;
   }
   empty.style.display = "none";
-  const cards = await Promise.all(docs.map(({ id, data }) => renderVideoCard(id, data)));
+
+  // Group per-game docs into match-group cards. Solo videos (no parentVideoKey
+  // OR self-referential parent where isSingleGame kept the parent key) render
+  // as normal cards. Games sharing a parentVideoKey collapse into one card.
+  const groups = new Map(); // parentKey -> [ {id, data}, ... ]
+  const singles = [];
+  docs.forEach((entry) => {
+    const p = entry.data.parentVideoKey;
+    // Only treat as multi-game if this doc has a parent AND that parent isn't itself
+    // (single-game path reuses parentVideoKey; those docs don't have gameCount > 1).
+    if (p && p !== entry.id && (entry.data.gameCount || 0) > 1) {
+      if (!groups.has(p)) groups.set(p, []);
+      groups.get(p).push(entry);
+    } else {
+      singles.push(entry);
+    }
+  });
+
+  // Sort each group by gameIndex ascending
+  for (const arr of groups.values()) {
+    arr.sort((a, b) => (a.data.gameIndex || 0) - (b.data.gameIndex || 0));
+  }
+
+  // Build a unified list of renderable "items" — either a single video entry
+  // or a match-group. Sort all items by most recent createdAt so groups and
+  // singletons interleave chronologically.
+  const items = [];
+  singles.forEach((e) => items.push({ kind: "single", entry: e, ts: tsFromEntry(e) }));
+  groups.forEach((arr, parentKey) => {
+    // Group timestamp = latest game createdAt (usually all within a minute)
+    const ts = Math.max(...arr.map(tsFromEntry));
+    items.push({ kind: "group", parentKey, games: arr, ts });
+  });
+  items.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+  const cards = await Promise.all(items.map(async (item) => {
+    if (item.kind === "single") {
+      return await renderVideoCard(item.entry.id, item.entry.data);
+    }
+    return await renderMatchGroupCard(item.parentKey, item.games);
+  }));
   cards.forEach((c) => grid.appendChild(c));
+}
+
+function tsFromEntry(e) {
+  const c = e.data && e.data.createdAt;
+  if (c && c.toDate) return c.toDate().getTime();
+  return 0;
+}
+
+// Match-group card: root name + games badge + thumbnail from Game 1.
+// Click card → expand/collapse a list of games; click a game row → openVideo.
+async function renderMatchGroupCard(parentKey, games) {
+  const card = document.createElement("div");
+  card.className = "video-card match-group";
+  card.dataset.parentKey = parentKey;
+
+  // Root name: strip any " — Game N" suffix from Game 1's title, otherwise use
+  // parentKey as a last resort.
+  const first = games[0];
+  const firstTitle = (first.data.title || parentKey || "").replace(/\s*[—-]\s*Game\s+\d+.*$/i, "");
+  const rootTitle = firstTitle || parentKey;
+
+  // Thumbnail: reuse first game's thumbnail if available
+  const thumb = document.createElement("div");
+  thumb.className = "video-card-thumb";
+  if (first.data.thumbnailPath) {
+    try {
+      const url = await getDownloadURL(ref(fbStorage, first.data.thumbnailPath));
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = rootTitle;
+      thumb.appendChild(img);
+    } catch (err) {
+      thumb.appendChild(document.createTextNode("🎬"));
+    }
+  } else {
+    thumb.appendChild(document.createTextNode("🎬"));
+  }
+  // Blue "N games" badge
+  const badge = document.createElement("div");
+  badge.className = "match-group-badge";
+  badge.textContent = `${games.length} games`;
+  thumb.appendChild(badge);
+
+  // Body: title + date + chevron
+  const body = document.createElement("div");
+  body.className = "video-card-body";
+  const titleEl = document.createElement("div");
+  titleEl.className = "video-card-title";
+  titleEl.textContent = rootTitle;
+  const chevron = document.createElement("span");
+  chevron.className = "match-group-chevron";
+  chevron.textContent = "▾";
+  titleEl.appendChild(chevron);
+  const metaEl = document.createElement("div");
+  metaEl.className = "video-card-meta";
+  const dateStr = first.data.createdAt && first.data.createdAt.toDate ? first.data.createdAt.toDate().toLocaleDateString() : "—";
+  const dateSpan = document.createElement("span");
+  dateSpan.textContent = dateStr;
+  metaEl.appendChild(dateSpan);
+  body.appendChild(titleEl);
+  body.appendChild(metaEl);
+
+  // Games list (hidden until expanded)
+  const list = document.createElement("div");
+  list.className = "match-games-list";
+  games.forEach((g) => {
+    const row = document.createElement("div");
+    row.className = "match-game-row";
+    row.dataset.videoKey = g.id;
+    const label = document.createElement("span");
+    label.className = "match-game-label";
+    label.textContent = `Game ${g.data.gameIndex || "?"}`;
+    row.appendChild(label);
+    const status = document.createElement("span");
+    const st = (g.data.status || "processing").toLowerCase();
+    const displayStatus = (st === "ready" || st === "uploading") ? "processing" : st;
+    status.className = `match-game-status ${displayStatus}`;
+    status.textContent = displayStatus;
+    row.appendChild(status);
+    const arrow = document.createElement("span");
+    arrow.className = "match-game-arrow";
+    arrow.textContent = "→";
+    row.appendChild(arrow);
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openVideo(g.id, g.data);
+    });
+    list.appendChild(row);
+  });
+
+  card.appendChild(thumb);
+  card.appendChild(body);
+  card.appendChild(list);
+
+  card.addEventListener("click", (e) => {
+    // Ignore clicks that originated inside the games list (rows have their own
+    // stopPropagation, but this is belt+braces).
+    if (list.contains(e.target)) return;
+    card.classList.toggle("expanded");
+  });
+
+  return card;
 }
 
 // Filter chip handlers
