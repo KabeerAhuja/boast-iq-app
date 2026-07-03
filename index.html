@@ -6120,6 +6120,18 @@ async function spawnGameJobs() {
   gameVideoKeys = [];
   const baseName = (originalFileName || "Match").replace(/\.[^.]+$/, "");
 
+  // Single-game path: show the live processing view (progress bar + preview)
+  // like the pre-segmentation flow. Multi-game path stays on My Videos since
+  // there's no coherent single-view for N parallel jobs.
+  if (isSingleGame) {
+    showStep("process");
+    processingStartTime = Date.now();
+    totalSrcFrames = gameSegments[0].endFrame - gameSegments[0].startFrame;
+    completedSrcFrames = 0;
+    document.getElementById("preview-video").src = videoBlobUrl;
+    updateOverallProgress(0, "Starting…");
+  }
+
   // Spawn all games concurrently. Each game: create doc → get job_id →
   // fire /api/prepare (async on backend) → open WebSocket and send
   // start_processing. Backend handles waiting for prepare output.
@@ -6192,9 +6204,23 @@ async function spawnGameJobs() {
     gws.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch (_) { return; }
+      // Single-game: render live progress through the existing process step,
+      // and let handleWsMessage drive showResults on complete.
+      if (isSingleGame) {
+        // Point globals at this game's job/keys so handleWsMessage and
+        // showResults use the right identifiers.
+        jobId = gameJobId;
+        videoKey = gvk;
+        // Prevent handleWsMessage's own updateVideoStatus writes from racing
+        // with the backend's — they should agree since gvk is authoritative.
+        handleWsMessage(msg);
+        if (msg.type === "complete" || msg.type === "error") {
+          try { gws.close(); } catch (_) {}
+        }
+        return;
+      }
+      // Multi-game: just track status (user is on My Videos looking at cards).
       if (msg.type === "complete") {
-        // Backend also writes Firestore status server-side; this is belt+braces
-        // for when the tab happens to still be open.
         updateVideoStatus(gvk, "complete");
         try { gws.close(); } catch (_) {}
       } else if (msg.type === "error") {
@@ -6203,9 +6229,14 @@ async function spawnGameJobs() {
       }
     };
     gws.onerror = (err) => console.warn(`WS error for game ${i + 1}:`, err);
+    if (isSingleGame) {
+      // Expose to the global `ws` so btnBackToVideos can close it cleanly.
+      ws = gws;
+    }
   }));
 
-  // Multi-game: hide the parent doc so users only see the per-game cards.
+  // Multi-game: hide the parent doc so users only see the per-game cards,
+  // and route to My Videos where each card processes independently.
   if (!isSingleGame && parentVideoKey) {
     try {
       await updateDoc(doc(fbFirestore, "videos", parentVideoKey), {
@@ -6214,9 +6245,10 @@ async function spawnGameJobs() {
         hiddenFromList: true,
       });
     } catch (err) { console.warn("parent doc hide failed:", err); }
+    goToMyVideos();
+    return;
   }
-
-  goToMyVideos();
+  // Single-game path stays on step-process (WebSocket handlers drive UI).
 }
 
 function refreshMgUi() {
