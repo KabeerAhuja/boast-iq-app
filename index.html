@@ -706,6 +706,50 @@
     color: #fff;
   }
 
+  /* Mark Games mode toggle (Single Game / Mark Games pill switch) */
+  .mg-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    margin-bottom: 18px;
+  }
+  .mg-mode-pill {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--text-dim);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 20px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .mg-mode-pill:hover { color: var(--text); }
+  .mg-mode-pill.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .mg-single-info {
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 14px 16px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .mg-single-info.captured {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
   /* Overall Progress */
   .overall-progress {
     background: var(--surface);
@@ -3622,28 +3666,42 @@
     <div class="btn-row"><button class="btn btn-primary" id="btn-continue-config">Continue →</button></div>
   </div>
 
-  <!-- Step 2.5: Mark Games -->
+  <!-- Step 2.5: Mark Games (with Single/Multi toggle) -->
   <div id="step-mark-games" class="step">
     <div class="step-label">Step 3</div>
-    <div class="step-title">Mark Games</div>
-    <div class="step-desc">Scrub through the video, then mark the start and end frame of each game. Squash matches are up to 5 games — mark each one. If your video is just a single game, hit "This is one game" to skip.</div>
+    <div class="mg-mode-toggle" role="tablist" aria-label="Game mode">
+      <button class="mg-mode-pill active" id="mg-mode-single" role="tab" aria-selected="true" type="button">Single Game</button>
+      <button class="mg-mode-pill" id="mg-mode-multi" role="tab" aria-selected="false" type="button">Mark Games</button>
+    </div>
+    <div class="step-title" id="mg-title">Single Game</div>
+    <div class="step-desc" id="mg-desc">Scrub to the frame where the game begins, then continue to tag your players.</div>
     <video id="mg-video" class="video-preview" controls preload="metadata" muted playsinline></video>
     <div class="mg-readouts">
-      <span id="mg-time">0.00 / 0.00s</span>
-      <span id="mg-frame">frame 0 / 0</span>
+      <span id="mg-time">0:00 / 0:00</span>
     </div>
-    <div class="mg-actions">
-      <button class="btn btn-primary" id="mg-mark-start" type="button">Mark Game 1 Start</button>
-      <button class="btn btn-primary" id="mg-mark-end" type="button" disabled>Mark Game 1 End</button>
+
+    <!-- Multi-game controls (marking start/end + timeline + list) -->
+    <div id="mg-multi-controls" style="display:none;">
+      <div class="mg-actions">
+        <button class="btn btn-primary" id="mg-mark-start" type="button">Mark Game 1 Start</button>
+        <button class="btn btn-primary" id="mg-mark-end" type="button" disabled>Mark Game 1 End</button>
+      </div>
+      <div id="mg-timeline">
+        <div id="mg-segments"></div>
+        <div id="mg-playhead"></div>
+      </div>
+      <ul id="mg-list" class="mg-list"></ul>
     </div>
-    <div id="mg-timeline">
-      <div id="mg-segments"></div>
-      <div id="mg-playhead"></div>
+
+    <!-- Single-game hint (just captured start frame + text) -->
+    <div id="mg-single-controls">
+      <div class="mg-single-info" id="mg-single-info">
+        Scrub to where the game begins, then click Continue.
+      </div>
     </div>
-    <ul id="mg-list" class="mg-list"></ul>
-    <div class="btn-row" style="justify-content: space-between;">
-      <button class="btn btn-secondary" id="mg-skip" type="button">This is one game</button>
-      <button class="btn btn-primary" id="mg-continue" type="button" disabled>Continue → Select Players</button>
+
+    <div class="btn-row" style="justify-content: flex-end;">
+      <button class="btn btn-primary" id="mg-continue" type="button">Continue → Select Players</button>
     </div>
   </div>
 
@@ -5816,11 +5874,13 @@ document.getElementById("btn-start").addEventListener("click", onSelectStartClic
 document.getElementById("btn-new-upload").addEventListener("click", () => showStep("upload"));
 
 // ===========================================================================
-// Mark Games step: scrub to game start/end, capture up to 5 segments.
+// Mark Games step: pill toggle between Single Game and Mark Games. In Single
+// Game mode, the user scrubs and clicks Continue — that timestamp becomes the
+// game's start (end = end of video). In Mark Games mode, they mark each
+// game's start + end (up to 5). Both modes converge on gameSegments[].
 // ===========================================================================
 const mgVideo = document.getElementById("mg-video");
 const mgTimeEl = document.getElementById("mg-time");
-const mgFrameEl = document.getElementById("mg-frame");
 const mgMarkStartBtn = document.getElementById("mg-mark-start");
 const mgMarkEndBtn = document.getElementById("mg-mark-end");
 const mgTimeline = document.getElementById("mg-timeline");
@@ -5828,7 +5888,27 @@ const mgSegmentsEl = document.getElementById("mg-segments");
 const mgPlayhead = document.getElementById("mg-playhead");
 const mgListEl = document.getElementById("mg-list");
 const mgContinueBtn = document.getElementById("mg-continue");
-const mgSkipBtn = document.getElementById("mg-skip");
+const mgModeSingleBtn = document.getElementById("mg-mode-single");
+const mgModeMultiBtn = document.getElementById("mg-mode-multi");
+const mgMultiControls = document.getElementById("mg-multi-controls");
+const mgSingleControls = document.getElementById("mg-single-controls");
+const mgSingleInfo = document.getElementById("mg-single-info");
+const mgTitleEl = document.getElementById("mg-title");
+const mgDescEl = document.getElementById("mg-desc");
+
+// "single" | "multi"
+let mgMode = "single";
+
+// Format seconds as m:ss (or h:mm:ss for long videos).
+function fmtMmSs(sec) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const total = Math.floor(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
 
 function initMarkGames() {
   gameSegments = [];
@@ -5837,8 +5917,35 @@ function initMarkGames() {
   gameVideoKeys = [];
   mgVideo.src = videoBlobUrl || "";
   mgVideo.load();
+  setMgMode("single");
+}
+
+function setMgMode(mode) {
+  mgMode = mode;
+  mgModeSingleBtn.classList.toggle("active", mode === "single");
+  mgModeSingleBtn.setAttribute("aria-selected", mode === "single" ? "true" : "false");
+  mgModeMultiBtn.classList.toggle("active", mode === "multi");
+  mgModeMultiBtn.setAttribute("aria-selected", mode === "multi" ? "true" : "false");
+
+  if (mode === "single") {
+    mgTitleEl.textContent = "Single Game";
+    mgDescEl.textContent = "Scrub to the frame where the game begins, then continue to tag your players.";
+    mgSingleControls.style.display = "";
+    mgMultiControls.style.display = "none";
+    // Reset any multi-mode segments/pending when switching to single
+    pendingSegmentStart = null;
+    // Keep whatever the user's video currentTime is; Continue will read it.
+  } else {
+    mgTitleEl.textContent = "Mark Games";
+    mgDescEl.textContent = "Scrub through the video, then mark the start and end frame of each game.";
+    mgSingleControls.style.display = "none";
+    mgMultiControls.style.display = "";
+  }
   refreshMgUi();
 }
+
+mgModeSingleBtn.addEventListener("click", () => setMgMode("single"));
+mgModeMultiBtn.addEventListener("click", () => setMgMode("multi"));
 
 mgVideo.addEventListener("timeupdate", updateMgPlayhead);
 mgVideo.addEventListener("loadedmetadata", updateMgReadouts);
@@ -5853,12 +5960,13 @@ function updateMgPlayhead() {
 
 function updateMgReadouts() {
   const dur = mgVideo.duration || (videoMeta.duration_sec || 0);
-  const fps = videoMeta.src_fps || 30;
-  const totalFrames = videoMeta.total_frames || Math.round(dur * fps);
   const t = mgVideo.currentTime || 0;
-  const frame = Math.round(t * fps);
-  mgTimeEl.textContent = `${t.toFixed(2)} / ${dur.toFixed(2)}s`;
-  mgFrameEl.textContent = `frame ${frame} / ${totalFrames}`;
+  mgTimeEl.textContent = `${fmtMmSs(t)} / ${fmtMmSs(dur)}`;
+  // Single-mode: keep the info line updated with what "Continue" will lock in.
+  if (mgMode === "single" && mgSingleInfo) {
+    mgSingleInfo.classList.add("captured");
+    mgSingleInfo.textContent = `Game will start at ${fmtMmSs(t)} — click Continue to confirm.`;
+  }
 }
 
 mgTimeline.addEventListener("click", (e) => {
@@ -5903,14 +6011,19 @@ mgMarkEndBtn.addEventListener("click", () => {
   refreshMgUi();
 });
 
-mgSkipBtn.addEventListener("click", async () => {
-  const dur = videoMeta.duration_sec || mgVideo.duration || 0;
-  const total = videoMeta.total_frames || Math.round(dur * (videoMeta.src_fps || 30));
-  gameSegments = [{ startFrame: 0, endFrame: total, startSec: 0, endSec: dur }];
-  await beginPlayerClickForGame(0);
-});
-
 mgContinueBtn.addEventListener("click", async () => {
+  if (mgMode === "single") {
+    // Single-game path: take the user's current scrub time as the start.
+    const dur = videoMeta.duration_sec || mgVideo.duration || 0;
+    const total = videoMeta.total_frames || Math.round(dur * (videoMeta.src_fps || 30));
+    const fps = videoMeta.src_fps || 30;
+    const startSec = mgVideo.currentTime || 0;
+    const startFrame = Math.max(0, Math.min(total - 1, Math.round(startSec * fps)));
+    gameSegments = [{ startFrame, endFrame: total, startSec, endSec: dur }];
+    await beginPlayerClickForGame(0);
+    return;
+  }
+  // Multi-mode
   if (gameSegments.length === 0) return;
   await beginPlayerClickForGame(0);
 });
@@ -5982,8 +6095,16 @@ async function onSelectStartClick() {
 // Spawn N parallel tracking jobs — one per game segment. Each game gets its
 // own video_key, its own Firestore doc, its own job_id, and its own
 // WebSocket. All share the same GCS source upload (firebasePath).
+//
+// NOTE: we only block on `uploadPromise` (the file must exist in GCS before
+// the backend can download it). We deliberately do NOT block on
+// `preparePromise` — for long videos, prepare_job takes minutes to complete
+// and there's no reason to make the user stare at the UI. Instead, we send
+// the WebSocket start_processing message immediately; the Modal ws_process
+// handler polls for prepare's output files (frame_timestamps.json etc.)
+// before proceeding. The server-side Firestore status writer surfaces
+// completion even if the user closes the tab.
 async function spawnGameJobs() {
-  // Await the single upload + prepare that started during handleFile.
   const btnStart = document.getElementById("btn-start");
   if (btnStart) { btnStart.disabled = true; btnStart.textContent = "Finishing upload…"; }
   try {
@@ -5993,31 +6114,22 @@ async function spawnGameJobs() {
     if (btnStart) { btnStart.disabled = false; btnStart.textContent = "Start Tracking →"; }
     return;
   }
-  if (btnStart) btnStart.textContent = "Preparing video…";
-  try {
-    if (preparePromise) await preparePromise;
-  } catch (err) {
-    alert(`Prepare failed: ${err.message || err}`);
-    if (btnStart) { btnStart.disabled = false; btnStart.textContent = "Start Tracking →"; }
-    return;
-  }
-  if (btnStart) btnStart.textContent = "Spawning game jobs…";
+  if (btnStart) btnStart.textContent = "Starting…";
 
   const isSingleGame = gameSegments.length === 1;
   gameVideoKeys = [];
   const baseName = (originalFileName || "Match").replace(/\.[^.]+$/, "");
 
-  // Spawn all games concurrently.
+  // Spawn all games concurrently. Each game: create doc → get job_id →
+  // fire /api/prepare (async on backend) → open WebSocket and send
+  // start_processing. Backend handles waiting for prepare output.
   await Promise.all(gameSegments.map(async (seg, i) => {
-    // Single-game skip path reuses the parent video_key so the user keeps a
-    // clean library entry (no __g1 suffix, no hidden parent doc). Multi-game
-    // path uses per-game keys and hides the parent.
+    // Single-game path reuses parentVideoKey so the library entry stays clean
+    // (no __g1 suffix, no hidden parent). Multi uses per-game keys.
     const gvk = isSingleGame ? parentVideoKey : makeGameVideoKey(parentVideoKey, i + 1);
     gameVideoKeys.push(gvk);
 
     if (!isSingleGame) {
-      // Create a fresh video doc for this game. `title` gets the "— Game N"
-      // suffix so it's obvious in My Videos.
       try {
         await createVideoDoc(gvk, { name: `${baseName} — Game ${i + 1}` });
       } catch (err) {
@@ -6025,7 +6137,6 @@ async function spawnGameJobs() {
       }
     }
 
-    // Persist per-game metadata (playerConfig + trim range + game index).
     try {
       await updateDoc(doc(fbFirestore, "videos", gvk), {
         playerConfig,
@@ -6046,25 +6157,22 @@ async function spawnGameJobs() {
     });
     const { job_id: gameJobId } = await jr.json();
 
-    // Kick off prepare_job for this game's job_id (same source.mp4 downloaded
-    // into a fresh scratch dir keyed by job_id — see Modal_app.py prepare_job).
-    try {
-      await fetch(`${API}/api/prepare`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          job_id: gameJobId,
-          gcs_path: firebasePath,
-          video_key: gvk,
-          skip_first_frame: true,
-        }),
-      });
-    } catch (err) { console.warn("per-game prepare failed:", err); }
+    // Fire prepare (returns immediately with call_id — actual work happens
+    // asynchronously on Modal). We don't await its result: the WebSocket
+    // handler will wait for prepare's output files to exist server-side.
+    fetch(`${API}/api/prepare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        job_id: gameJobId,
+        gcs_path: firebasePath,
+        video_key: gvk,
+        skip_first_frame: true,
+      }),
+    }).catch((err) => console.warn("per-game prepare kickoff failed:", err));
 
-    // Open a per-game WebSocket. The backend will run tracking bounded by
-    // trim_start_frame / trim_end_frame. We attach minimal handlers to update
-    // Firestore status; the user is returned to My Videos and each card
-    // reflects progress via that status.
+    // Open the game's WebSocket and send start_processing. Backend polls for
+    // frame_timestamps.json before running the actual tracking loop.
     const gws = new WebSocket(`${API.replace("http", "ws")}/ws/${gameJobId}`);
     gws.onopen = () => {
       gws.send(JSON.stringify({
@@ -6085,6 +6193,8 @@ async function spawnGameJobs() {
       let msg;
       try { msg = JSON.parse(e.data); } catch (_) { return; }
       if (msg.type === "complete") {
+        // Backend also writes Firestore status server-side; this is belt+braces
+        // for when the tab happens to still be open.
         updateVideoStatus(gvk, "complete");
         try { gws.close(); } catch (_) {}
       } else if (msg.type === "error") {
@@ -6112,56 +6222,63 @@ async function spawnGameJobs() {
 function refreshMgUi() {
   const dur = mgVideo.duration || (videoMeta.duration_sec || 0) || 1;
 
-  // Segment bars on timeline
-  mgSegmentsEl.innerHTML = "";
-  gameSegments.forEach((g, i) => {
-    const bar = document.createElement("div");
-    bar.className = "seg";
-    const leftPct = (g.startSec / dur) * 100;
-    const widthPct = ((g.endSec - g.startSec) / dur) * 100;
-    bar.style.left = `${leftPct}%`;
-    bar.style.width = `${widthPct}%`;
-    bar.textContent = `G${i + 1}`;
-    mgSegmentsEl.appendChild(bar);
-  });
-  if (pendingSegmentStart) {
-    // Show pending start as a thin marker until end is captured
-    const bar = document.createElement("div");
-    bar.className = "seg pending";
-    const leftPct = (pendingSegmentStart.sec / dur) * 100;
-    bar.style.left = `${leftPct}%`;
-    bar.style.width = `4px`;
-    bar.textContent = "";
-    mgSegmentsEl.appendChild(bar);
+  // Multi mode: paint segment bars + list + button states.
+  if (mgMode === "multi") {
+    mgSegmentsEl.innerHTML = "";
+    gameSegments.forEach((g, i) => {
+      const bar = document.createElement("div");
+      bar.className = "seg";
+      const leftPct = (g.startSec / dur) * 100;
+      const widthPct = ((g.endSec - g.startSec) / dur) * 100;
+      bar.style.left = `${leftPct}%`;
+      bar.style.width = `${widthPct}%`;
+      bar.textContent = `G${i + 1}`;
+      mgSegmentsEl.appendChild(bar);
+    });
+    if (pendingSegmentStart) {
+      const bar = document.createElement("div");
+      bar.className = "seg pending";
+      const leftPct = (pendingSegmentStart.sec / dur) * 100;
+      bar.style.left = `${leftPct}%`;
+      bar.style.width = `4px`;
+      bar.textContent = "";
+      mgSegmentsEl.appendChild(bar);
+    }
+
+    mgListEl.innerHTML = "";
+    gameSegments.forEach((g, i) => {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      // "Game N: 0:48 → 12:22"
+      label.textContent = `Game ${i + 1}: ${fmtMmSs(g.startSec)} → ${fmtMmSs(g.endSec)}`;
+      li.appendChild(label);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mg-remove";
+      btn.textContent = "Remove";
+      btn.addEventListener("click", () => {
+        gameSegments.splice(i, 1);
+        refreshMgUi();
+      });
+      li.appendChild(btn);
+      mgListEl.appendChild(li);
+    });
+
+    const nextGameNum = gameSegments.length + 1;
+    const atMax = gameSegments.length >= 5;
+    mgMarkStartBtn.textContent = `Mark Game ${Math.min(nextGameNum, 5)} Start`;
+    mgMarkEndBtn.textContent = `Mark Game ${Math.min(nextGameNum, 5)} End`;
+    mgMarkStartBtn.disabled = !!pendingSegmentStart || atMax;
+    mgMarkEndBtn.disabled = !pendingSegmentStart;
+    mgContinueBtn.disabled = gameSegments.length === 0;
+    return;
   }
 
-  // List
-  mgListEl.innerHTML = "";
-  gameSegments.forEach((g, i) => {
-    const li = document.createElement("li");
-    const label = document.createElement("span");
-    label.textContent = `Game ${i + 1} — ${g.startSec.toFixed(2)}s → ${g.endSec.toFixed(2)}s (${g.endFrame - g.startFrame} frames)`;
-    li.appendChild(label);
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "mg-remove";
-    btn.textContent = "Remove";
-    btn.addEventListener("click", () => {
-      gameSegments.splice(i, 1);
-      refreshMgUi();
-    });
-    li.appendChild(btn);
-    mgListEl.appendChild(li);
-  });
-
-  // Button states
-  const nextGameNum = gameSegments.length + 1;
-  const atMax = gameSegments.length >= 5;
-  mgMarkStartBtn.textContent = `Mark Game ${Math.min(nextGameNum, 5)} Start`;
-  mgMarkEndBtn.textContent = `Mark Game ${Math.min(nextGameNum, 5)} End`;
-  mgMarkStartBtn.disabled = !!pendingSegmentStart || atMax;
-  mgMarkEndBtn.disabled = !pendingSegmentStart;
-  mgContinueBtn.disabled = gameSegments.length === 0;
+  // Single mode: single hint line, always continue-able.
+  if (mgSingleInfo && !mgSingleInfo.classList.contains("captured")) {
+    mgSingleInfo.textContent = "Scrub to where the game begins, then click Continue.";
+  }
+  mgContinueBtn.disabled = false;
 }
 async function startProcessing() {
   // Upload thumbnail (current frame canvas with player dots drawn) and persist player config to Firestore.
