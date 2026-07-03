@@ -2939,21 +2939,85 @@
   }
   .dash-viewer-frame { position: relative; }
   .dash-viewer-frame video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
-  .dash-viewer-star {
+  .dash-viewer-menu-btn {
     position: absolute; top: 12px; right: 12px;
     width: 40px; height: 40px;
     background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 10px;
-    color: #fff; font-size: 22px; line-height: 1;
+    color: #fff; font-size: 22px; line-height: 1; font-weight: 700;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; user-select: none;
     transition: transform 0.12s, background 0.15s, color 0.15s, border-color 0.15s;
-    z-index: 2;
+    z-index: 3;
   }
-  .dash-viewer-star:hover { background: rgba(0,0,0,0.75); color: #ffd76b; border-color: rgba(255,215,107,0.5); }
-  .dash-viewer-star:active { transform: scale(0.92); }
-  .dash-viewer-star.starred { color: #ffd76b; text-shadow: 0 0 10px rgba(255,215,107,0.7); border-color: rgba(255,215,107,0.5); }
+  .dash-viewer-menu-btn:hover { background: rgba(0,0,0,0.75); color: var(--accent); border-color: rgba(255,255,255,0.25); }
+  .dash-viewer-menu-btn:active { transform: scale(0.92); }
+  .dash-viewer-menu-btn[aria-expanded="true"] { background: rgba(0,0,0,0.85); border-color: rgba(255,255,255,0.35); }
+
+  .dash-viewer-menu {
+    position: absolute; top: 60px; right: 12px;
+    min-width: 200px;
+    background: rgba(18, 18, 22, 0.96);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px;
+    padding: 6px;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+    display: none;
+    z-index: 4;
+    color: #fff;
+    font-size: 13px;
+  }
+  .dash-viewer-menu.open { display: block; }
+  .dash-menu-item {
+    appearance: none; background: transparent; border: 0;
+    width: 100%; padding: 9px 10px;
+    display: flex; align-items: center; gap: 10px;
+    color: #fff; font-size: 13px;
+    text-align: left; cursor: pointer;
+    border-radius: 7px;
+    transition: background 0.12s;
+  }
+  .dash-menu-item:hover { background: rgba(255,255,255,0.08); }
+  .dash-menu-icon { font-size: 15px; line-height: 1; width: 18px; text-align: center; color: #ffd76b; }
+  .dash-menu-icon.off { color: rgba(255,255,255,0.55); }
+  .dash-menu-label { flex: 1; }
+  .dash-menu-sep {
+    height: 1px; background: rgba(255,255,255,0.08);
+    margin: 6px 4px;
+  }
+  .dash-menu-heading {
+    padding: 6px 10px 4px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+  }
+  .dash-menu-speeds {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 4px;
+  }
+  .dash-menu-speed {
+    appearance: none; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.75);
+    padding: 7px 4px;
+    font-size: 12px; font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .dash-menu-speed:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  .dash-menu-speed.active {
+    background: var(--accent);
+    color: #0a0a0c;
+    border-color: var(--accent);
+  }
   .dash-scrub-row {
     padding: 10px 16px 6px;
     border-top: 1px solid rgba(255,255,255,0.06);
@@ -3776,7 +3840,21 @@
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
             <video id="pv-video"></video>
-            <button class="dash-viewer-star" id="dash-viewer-star" title="Star this point" aria-label="Star current point">☆</button>
+            <button class="dash-viewer-menu-btn" id="dash-viewer-menu-btn" type="button" title="Point options" aria-label="Point options" aria-haspopup="true" aria-expanded="false">⋮</button>
+            <div class="dash-viewer-menu" id="dash-viewer-menu" role="menu" aria-hidden="true">
+              <button class="dash-menu-item" id="dash-menu-star" type="button" role="menuitem">
+                <span class="dash-menu-icon" id="dash-menu-star-icon">☆</span>
+                <span class="dash-menu-label" id="dash-menu-star-label">Star this point</span>
+              </button>
+              <div class="dash-menu-sep"></div>
+              <div class="dash-menu-heading">Playback speed</div>
+              <div class="dash-menu-speeds">
+                <button class="dash-menu-speed" type="button" data-speed="0.5" role="menuitem">0.5×</button>
+                <button class="dash-menu-speed" type="button" data-speed="0.75" role="menuitem">0.75×</button>
+                <button class="dash-menu-speed active" type="button" data-speed="1" role="menuitem">1×</button>
+                <button class="dash-menu-speed" type="button" data-speed="1.5" role="menuitem">1.5×</button>
+              </div>
+            </div>
           </div>
           <div class="dash-scrub-row">
             <input type="range" id="dash-scrub" class="dash-scrub" min="0" max="1" step="0.01" value="0" aria-label="Scrub through point">
@@ -6508,6 +6586,9 @@ function showResults(msg) {
     try { notesStore = JSON.parse(localStorage.getItem(NOTES_LS_KEY) || '{}'); } catch (_) { notesStore = {}; }
 
     const STARS_LS_KEY = `boastiq-stars-${videoKey || 'unknown'}`;
+    // User's chosen playback speed from the menu. Space-hold fast-forward
+    // temporarily overrides to 2× and restores this value on release.
+    let userChosenSpeed = 1;
     let starredPoints = new Set();
     try {
       const arr = JSON.parse(localStorage.getItem(STARS_LS_KEY) || '[]');
@@ -6522,14 +6603,18 @@ function showResults(msg) {
       saveStars();
     }
     function syncViewerStar() {
-      const btn = document.getElementById('dash-viewer-star');
-      if (!btn) return;
+      // Reflect starred state inside the 3-dot menu's star item.
+      const item = document.getElementById('dash-menu-star');
+      const icon = document.getElementById('dash-menu-star-icon');
+      const label = document.getElementById('dash-menu-star-label');
+      if (!item || !icon || !label) return;
       const n = dashState.currentPointNum;
       const on = n != null && starredPoints.has(String(n));
-      btn.classList.toggle('starred', on);
-      btn.textContent = on ? '★' : '☆';
-      btn.title = `${on ? 'Unstar' : 'Star'} this point`;
-      btn.disabled = n == null;
+      icon.textContent = on ? '★' : '☆';
+      icon.classList.toggle('off', !on);
+      label.textContent = on ? 'Unstar this point' : 'Star this point';
+      item.disabled = n == null;
+      item.style.opacity = n == null ? '0.4' : '1';
     }
     function syncDrawerStar(pointNum) {
       const btn = document.querySelector(`.pv-star-btn[data-point-number="${pointNum}"]`);
@@ -6932,15 +7017,64 @@ function showResults(msg) {
       });
     }
 
-    function setupViewerStar() {
-      const btn = document.getElementById('dash-viewer-star');
-      if (!btn) return;
-      btn.addEventListener('click', () => {
-        const n = dashState.currentPointNum;
-        if (n == null) return;
-        toggleStar(n);
-        syncViewerStar();
-        syncDrawerStar(n);
+    function setupViewerMenu() {
+      const btn = document.getElementById('dash-viewer-menu-btn');
+      const menu = document.getElementById('dash-viewer-menu');
+      const starItem = document.getElementById('dash-menu-star');
+      const speedBtns = document.querySelectorAll('.dash-menu-speed');
+      if (!btn || !menu) return;
+
+      const openMenu = () => {
+        menu.classList.add('open');
+        menu.setAttribute('aria-hidden', 'false');
+        btn.setAttribute('aria-expanded', 'true');
+      };
+      const closeMenu = () => {
+        menu.classList.remove('open');
+        menu.setAttribute('aria-hidden', 'true');
+        btn.setAttribute('aria-expanded', 'false');
+      };
+      const isOpen = () => menu.classList.contains('open');
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isOpen()) closeMenu(); else openMenu();
+      });
+      // Clicks inside the menu shouldn't bubble up and re-close.
+      menu.addEventListener('click', (e) => e.stopPropagation());
+      // Outside click closes the menu.
+      document.addEventListener('click', () => { if (isOpen()) closeMenu(); });
+      // ESC closes the menu.
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isOpen()) closeMenu();
+      });
+
+      // Star item — toggles the current point's star.
+      if (starItem) {
+        starItem.addEventListener('click', () => {
+          const n = dashState.currentPointNum;
+          if (n == null) return;
+          toggleStar(n);
+          syncViewerStar();
+          syncDrawerStar(n);
+          closeMenu();
+        });
+      }
+
+      // Playback speed chips — update both the video and the persisted choice.
+      speedBtns.forEach((sb) => {
+        sb.addEventListener('click', () => {
+          const s = parseFloat(sb.dataset.speed);
+          if (!isFinite(s) || s <= 0) return;
+          userChosenSpeed = s;
+          // Only apply immediately if we're not in space-hold fast-forward.
+          // If we are, the release handler will restore userChosenSpeed for us.
+          if (typeof pvVideo !== 'undefined' && pvVideo) {
+            pvVideo.playbackRate = s;
+          }
+          speedBtns.forEach((x) => x.classList.toggle('active', x === sb));
+          closeMenu();
+        });
       });
     }
 
@@ -6950,7 +7084,7 @@ function showResults(msg) {
       document.getElementById('dash-floor-svg').innerHTML = courtShellSvg('');
       setupDashFilters();
       setupDashStatsToggle();
-      setupViewerStar();
+      setupViewerMenu();
       syncViewerStar();
     }
     initDashboard();
@@ -7964,11 +8098,19 @@ function showResults(msg) {
       if (scrub) {
         scrub.addEventListener('input', () => {
           scrub._dragging = true;
+          // Pause as soon as the user starts moving the scrubber (covers keyboard
+          // arrow scrubbing too, since keyboard fires input without pointerdown).
+          if (!pvVideo.paused) pvVideo.pause();
           pvVideo.currentTime = parseFloat(scrub.value);
           renderDashAll();
         });
         scrub.addEventListener('change', () => { scrub._dragging = false; });
-        scrub.addEventListener('pointerdown', () => { scrub._dragging = true; });
+        scrub.addEventListener('pointerdown', () => {
+          scrub._dragging = true;
+          // Explicit pause on pointer-down: fires before the first `input`
+          // event and guarantees the video is paused before the seek begins.
+          if (!pvVideo.paused) pvVideo.pause();
+        });
         scrub.addEventListener('pointerup', () => { scrub._dragging = false; });
       }
     }
@@ -8016,7 +8158,7 @@ function showResults(msg) {
       if (e.code === "Space") {
         e.preventDefault();
         if (spaceMode === 'hold') {
-          pvVideo.playbackRate = 1;
+          pvVideo.playbackRate = userChosenSpeed;
           if (speedIndicator) speedIndicator.classList.remove("visible");
           spaceMode = null;
         } else if (spaceHoldTimer != null) {
