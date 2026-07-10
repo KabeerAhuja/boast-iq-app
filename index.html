@@ -6649,6 +6649,102 @@ async function onSelectStartClick() {
 // handler polls for prepare's output files (frame_timestamps.json etc.)
 // before proceeding. The server-side Firestore status writer surfaces
 // completion even if the user closes the tab.
+// Poll the backend's /api/tracking-status/{video_key} endpoint and translate
+// server responses into WebSocket-style messages via `onMessage`. Returns a
+// control object with `stop()` to cancel the poll (e.g. on tab close or when
+// switching views). Stops itself automatically on terminal "complete" or
+// "error" states.
+//
+// Used as a fallback when a game's WebSocket dies (Cloudflare idle timeout,
+// browser tab sleep, Modal ASGI auto-cancel) but the backend spawn is still
+// grinding away — the same UI update code still gets the same updates.
+function pollTrackingStatus(videoKeyToPoll, onMessage, opts = {}) {
+  const intervalMs = opts.intervalMs || 3000;
+  let stopped = false;
+  let lastSegSeen = 0;
+  let lastState = null;
+  let timer = null;
+
+  async function tick() {
+    if (stopped) return;
+    try {
+      const resp = await fetch(
+        `${API}/api/tracking-status/${encodeURIComponent(videoKeyToPoll)}`
+      );
+      if (resp.ok) {
+        const s = await resp.json();
+        const state = s.state;
+        const curSeg = s.current_segment || 0;
+        const estTotal = s.est_total_segments || 0;
+        const framesDone = s.current_frames_done || 0;
+        const framesTotal = s.current_frames_total || 0;
+        const pct = s.pct || 0;
+        const msg = s.message || "";
+
+        // segment_start when we cross into a new segment
+        if (curSeg > lastSegSeen && state === "running") {
+          onMessage({
+            type: "segment_start",
+            segment: curSeg,
+            est_total: estTotal,
+            src_start: 0,
+            src_frames: framesTotal,
+            is_last: curSeg === estTotal,
+          });
+          lastSegSeen = curSeg;
+        }
+        if (state === "starting" || state === "running") {
+          onMessage({
+            type: "progress",
+            segment: curSeg,
+            frames_done: framesDone,
+            frames_total: framesTotal,
+            pct: pct,
+            message: msg,
+          });
+        }
+        if (state === "complete") {
+          const urls = s.urls || {};
+          onMessage({
+            type: "complete",
+            json_url: urls.json_url,
+            video_url: urls.video_url,
+            masks_url: urls.masks_url,
+            point_starts_url: urls.point_starts_url,
+            total_segments: urls.total_segments || curSeg,
+            total_frames_tracked: urls.total_frames_tracked || 0,
+          });
+          stopped = true;
+          return;
+        }
+        if (state === "error") {
+          onMessage({
+            type: "error",
+            message: s.error || "Tracking failed",
+          });
+          stopped = true;
+          return;
+        }
+        lastState = state;
+      }
+    } catch (err) {
+      // Network error — just retry on next tick.
+      console.warn(`[pollTrackingStatus] fetch failed for ${videoKeyToPoll}:`, err);
+    }
+    if (!stopped) timer = setTimeout(tick, intervalMs);
+  }
+
+  // Fire immediately so users see progress without waiting a full interval.
+  tick();
+
+  return {
+    stop() {
+      stopped = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+  };
+}
+
 async function spawnGameJobs() {
   const btnStart = document.getElementById("btn-start");
   if (btnStart) { btnStart.disabled = true; btnStart.textContent = "Finishing upload…"; }
@@ -6746,34 +6842,39 @@ async function spawnGameJobs() {
         trim_end_frame: seg.endFrame,
       }));
     };
+    // If the WS dies before we see a terminal message, we spin up an HTTP
+    // poller that reads the same tracking_status.json the backend spawn is
+    // writing. This makes the client resilient to Cloudflare idle timeouts,
+    // browser tab sleep, and Modal ASGI auto-cancels.
+    let gwsGotTerminal = false;
+    let gwsFallbackPoller = null;
+    const dispatchMsg = (msg) => {
+      if (isSingleGame) {
+        jobId = gameJobId;
+        videoKey = gvk;
+        handleWsMessage(msg);
+      } else {
+        if (msg.type === "complete") updateVideoStatus(gvk, "complete");
+        else if (msg.type === "error") updateVideoStatus(gvk, "failed");
+      }
+      if (msg.type === "complete" || msg.type === "error") {
+        gwsGotTerminal = true;
+        try { gws.close(); } catch (_) {}
+        if (gwsFallbackPoller) { gwsFallbackPoller.stop(); gwsFallbackPoller = null; }
+      }
+    };
+
     gws.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch (_) { return; }
-      // Single-game: render live progress through the existing process step,
-      // and let handleWsMessage drive showResults on complete.
-      if (isSingleGame) {
-        // Point globals at this game's job/keys so handleWsMessage and
-        // showResults use the right identifiers.
-        jobId = gameJobId;
-        videoKey = gvk;
-        // Prevent handleWsMessage's own updateVideoStatus writes from racing
-        // with the backend's — they should agree since gvk is authoritative.
-        handleWsMessage(msg);
-        if (msg.type === "complete" || msg.type === "error") {
-          try { gws.close(); } catch (_) {}
-        }
-        return;
-      }
-      // Multi-game: just track status (user is on My Videos looking at cards).
-      if (msg.type === "complete") {
-        updateVideoStatus(gvk, "complete");
-        try { gws.close(); } catch (_) {}
-      } else if (msg.type === "error") {
-        updateVideoStatus(gvk, "failed");
-        try { gws.close(); } catch (_) {}
-      }
+      dispatchMsg(msg);
     };
     gws.onerror = (err) => console.warn(`WS error for game ${i + 1}:`, err);
+    gws.onclose = () => {
+      if (gwsGotTerminal || gwsFallbackPoller) return;
+      console.log(`[game ${i + 1}] WS closed before terminal state — polling /api/tracking-status`);
+      gwsFallbackPoller = pollTrackingStatus(gvk, dispatchMsg);
+    };
     if (isSingleGame) {
       // Expose to the global `ws` so btnBackToVideos can close it cleanly.
       ws = gws;
