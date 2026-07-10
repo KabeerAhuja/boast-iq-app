@@ -3297,10 +3297,12 @@
   body.demo-mode #btn-back-to-videos,
   body.demo-mode #btn-manage-coach,
   body.demo-mode #btn-admin-coaches,
+  body.demo-mode #btn-admin-subs,
   body.demo-mode #btn-coach-dashboard,
   body.demo-mode #user-info,
   body.demo-mode #coach-modal,
   body.demo-mode #admin-coaches-modal,
+  body.demo-mode #admin-subs-modal,
   body.demo-mode #add-student-modal,
   body.demo-mode #invite-accept-modal,
   body.demo-mode #remove-student-modal,
@@ -3378,10 +3380,12 @@
   body.trial-mode #btn-back-to-videos,
   body.trial-mode #btn-manage-coach,
   body.trial-mode #btn-admin-coaches,
+  body.trial-mode #btn-admin-subs,
   body.trial-mode #btn-coach-dashboard,
   body.trial-mode #user-info,
   body.trial-mode #coach-modal,
   body.trial-mode #admin-coaches-modal,
+  body.trial-mode #admin-subs-modal,
   body.trial-mode #add-student-modal,
   body.trial-mode #invite-accept-modal,
   body.trial-mode #remove-student-modal,
@@ -3457,6 +3461,7 @@
   <div class="header-right">
     <button class="btn-header" id="btn-coach-dashboard" style="display:none;">Coach Dashboard</button>
     <button class="btn-header" id="btn-admin-coaches" style="display:none;">Manage Coaches</button>
+    <button class="btn-header" id="btn-admin-subs" style="display:none;">Manage Subscriptions</button>
     <button class="btn-header" id="btn-manage-coach" style="display:none;">Manage Coach</button>
     <div class="user-info" id="user-info" style="display:none;">
       <button class="user-info-trigger" id="btn-open-profile" title="Open profile" type="button">
@@ -3532,6 +3537,33 @@
       <div class="share-link-hint">Toggle the switch to grant or revoke coach status. Coaches see a "Coach Dashboard" in the header where they can manage their students.</div>
       <div class="share-msg" id="admin-coach-msg" style="display:none;"></div>
       <div class="coach-results" id="admin-coach-results"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Admin: Manage Subscriptions modal. Lists every user and lets the admin
+     grant / revoke a manual "active" subscriptionStatus. -->
+<div id="admin-subs-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-card" style="max-width: 720px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Manage Subscriptions</h3>
+      <button class="modal-close" id="btn-close-admin-subs" aria-label="Close">×</button>
+    </div>
+    <div class="share-section">
+      <div class="share-link-hint">
+        Toggle the switch to grant or revoke a manual "active" subscription.
+        Granted users pass the paywall the same as real Stripe subscribers.
+        Use "Grant to All" to activate every current user in one click.
+      </div>
+      <div class="share-msg" id="admin-subs-msg" style="display:none;"></div>
+      <div class="share-link-row" style="justify-content: space-between; margin-top: 12px;">
+        <input type="text" class="form-input" id="admin-subs-search-input"
+               placeholder="Filter by name or email..." style="flex: 1;">
+        <button class="btn btn-primary" id="btn-admin-subs-grant-all" type="button"
+                style="white-space: nowrap;">Grant to All</button>
+      </div>
+      <div class="coach-results" id="admin-subs-results"
+           style="max-height: 60vh; overflow-y: auto; margin-top: 8px;"></div>
     </div>
   </div>
 </div>
@@ -4419,6 +4451,7 @@ onAuthStateChanged(fbAuth, async (user) => {
     await loadCurrentCoach();
     await refreshCurrentUserDoc();
     document.getElementById("btn-admin-coaches").style.display = isAdminUser(user) ? "inline-flex" : "none";
+    document.getElementById("btn-admin-subs").style.display = isAdminUser(user) ? "inline-flex" : "none";
     document.getElementById("btn-coach-dashboard").style.display =
       (currentUserDoc && currentUserDoc.isCoach) ? "inline-flex" : "none";
     // Pending coach invite (e.g. coach used Add Student before this user existed) — prompt on sign-in.
@@ -4474,6 +4507,7 @@ onAuthStateChanged(fbAuth, async (user) => {
     userInfo.style.display = "none";
     document.getElementById("btn-manage-coach").style.display = "none";
     document.getElementById("btn-admin-coaches").style.display = "none";
+    document.getElementById("btn-admin-subs").style.display = "none";
     document.getElementById("btn-coach-dashboard").style.display = "none";
     currentUserDoc = null;
   }
@@ -8876,6 +8910,237 @@ function buildAdminCoachResultRow(uid, data) {
   toggleWrap.appendChild(toggleLabel);
   row.appendChild(toggleWrap);
   return row;
+}
+
+// ---------- Admin "Manage Subscriptions" modal ----------
+// Lists every user in Firestore and lets the admin toggle a manual "active"
+// subscriptionStatus per row (or grant it to everyone in one click). Grants
+// pass the same paywall the app checks for real Stripe subscribers
+// (subscriptionStatus in {"active", "trialing"}). Also stamps
+// subscriptionGrantedBy / subscriptionGrantedAt for audit.
+const adminSubsModal = document.getElementById("admin-subs-modal");
+const adminSubsSearchInput = document.getElementById("admin-subs-search-input");
+const adminSubsResults = document.getElementById("admin-subs-results");
+const adminSubsMsg = document.getElementById("admin-subs-msg");
+
+// In-memory cache of the fetched user list so filter-typing doesn't re-query.
+let adminSubsUsersCache = [];
+
+document.getElementById("btn-admin-subs").addEventListener("click", openAdminSubsModal);
+document.getElementById("btn-close-admin-subs").addEventListener("click", closeAdminSubsModal);
+adminSubsModal.addEventListener("click", (e) => {
+  if (e.target === adminSubsModal) closeAdminSubsModal();
+});
+document.getElementById("btn-admin-subs-grant-all").addEventListener("click", grantSubsToAllUsers);
+adminSubsSearchInput.addEventListener("input", () => {
+  const q = adminSubsSearchInput.value.trim().toLowerCase();
+  renderAdminSubsRows(filterAdminSubsCache(q));
+});
+
+function showAdminSubsMsg(text, kind) {
+  adminSubsMsg.style.display = "block";
+  adminSubsMsg.className = `share-msg ${kind || ""}`;
+  adminSubsMsg.textContent = text;
+}
+function clearAdminSubsMsg() {
+  adminSubsMsg.style.display = "none";
+  adminSubsMsg.textContent = "";
+}
+
+function filterAdminSubsCache(q) {
+  if (!q) return adminSubsUsersCache;
+  return adminSubsUsersCache.filter(({ data }) => {
+    const name = (data.displayName || "").toLowerCase();
+    const email = (data.email || "").toLowerCase();
+    return name.includes(q) || email.includes(q);
+  });
+}
+
+async function openAdminSubsModal() {
+  if (!isAdminUser(currentUser)) return;
+  clearAdminSubsMsg();
+  adminSubsSearchInput.value = "";
+  adminSubsResults.innerHTML = "<div class='coach-empty'>Loading users…</div>";
+  adminSubsModal.style.display = "flex";
+  await loadAdminSubsUsers();
+}
+
+function closeAdminSubsModal() {
+  adminSubsModal.style.display = "none";
+  adminSubsResults.innerHTML = "";
+}
+
+async function loadAdminSubsUsers() {
+  try {
+    // Order by displayName_lower for a stable alphabetical list. Users with
+    // no displayName still show up at the bottom (fall back to email in row).
+    const qref = query(
+      collection(fbFirestore, "users"),
+      orderBy("displayName_lower"),
+      limit(500)
+    );
+    const snap = await getDocs(qref);
+    adminSubsUsersCache = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+    renderAdminSubsRows(adminSubsUsersCache);
+  } catch (err) {
+    console.error("loadAdminSubsUsers failed:", err);
+    adminSubsResults.innerHTML = `<div class='coach-empty'>Failed to load: ${err.code || err.message}</div>`;
+  }
+}
+
+function renderAdminSubsRows(entries) {
+  adminSubsResults.innerHTML = "";
+  if (!entries.length) {
+    adminSubsResults.innerHTML = "<div class='coach-empty'>No users match.</div>";
+    return;
+  }
+  entries.forEach(({ id, data }) => {
+    adminSubsResults.appendChild(buildAdminSubsRow(id, data));
+  });
+}
+
+// Same status set the backend uses (Modal_app.py:_ACTIVE_SUB_STATUSES).
+const _ACTIVE_SUB_STATES = new Set(["active", "trialing"]);
+
+function buildAdminSubsRow(uid, data) {
+  const row = document.createElement("div");
+  row.className = "coach-result-row";
+  const photo = document.createElement("img");
+  photo.className = "share-row-photo";
+  photo.src = data.photoURL || "";
+  row.appendChild(photo);
+
+  const info = document.createElement("div");
+  info.className = "share-row-info";
+  const nameEl = document.createElement("div");
+  nameEl.className = "share-row-name";
+  nameEl.textContent = data.displayName || uid;
+  const emailEl = document.createElement("div");
+  emailEl.className = "share-row-email";
+  emailEl.textContent = data.email || "";
+  info.appendChild(nameEl);
+  info.appendChild(emailEl);
+  row.appendChild(info);
+
+  // Current status pill
+  const statusEl = document.createElement("span");
+  statusEl.style.cssText = "font-family:'Space Grotesk',sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; padding:3px 8px; border-radius:999px; margin-right:12px;";
+  const currentStatus = (data.subscriptionStatus || "none").toLowerCase();
+  const isActive = _ACTIVE_SUB_STATES.has(currentStatus);
+  statusEl.textContent = currentStatus;
+  statusEl.style.background = isActive ? "rgba(74,222,128,0.15)" : "rgba(160,40,58,0.15)";
+  statusEl.style.color = isActive ? "#4ade80" : "#C9344A";
+  statusEl.style.border = isActive ? "1px solid rgba(74,222,128,0.4)" : "1px solid rgba(201,52,74,0.4)";
+  row.appendChild(statusEl);
+
+  // Toggle: active ↔ none
+  const toggleWrap = document.createElement("label");
+  toggleWrap.className = "admin-coach-toggle";
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.checked = isActive;
+  toggle.addEventListener("click", (e) => e.stopPropagation());
+  toggle.addEventListener("change", async () => {
+    const desiredActive = toggle.checked;
+    toggle.disabled = true;
+    try {
+      await setUserSubscription(uid, desiredActive);
+      // Refresh row visuals in place
+      const newStatus = desiredActive ? "active" : "none";
+      data.subscriptionStatus = newStatus;
+      statusEl.textContent = newStatus;
+      statusEl.style.background = desiredActive ? "rgba(74,222,128,0.15)" : "rgba(160,40,58,0.15)";
+      statusEl.style.color = desiredActive ? "#4ade80" : "#C9344A";
+      statusEl.style.border = desiredActive
+        ? "1px solid rgba(74,222,128,0.4)"
+        : "1px solid rgba(201,52,74,0.4)";
+      showAdminSubsMsg(
+        `${data.displayName || data.email || uid} is ${desiredActive ? "now subscribed" : "no longer subscribed"}.`,
+        "success"
+      );
+    } catch (err) {
+      console.error("toggle sub failed:", err);
+      toggle.checked = !desiredActive;
+      showAdminSubsMsg(`Failed: ${err.code || err.message}`, "error");
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+  const toggleLabel = document.createElement("span");
+  toggleLabel.className = "admin-coach-toggle-label";
+  toggleLabel.textContent = "Subscribed";
+  toggleWrap.appendChild(toggle);
+  toggleWrap.appendChild(toggleLabel);
+  row.appendChild(toggleWrap);
+  return row;
+}
+
+// Write the subscription grant/revoke to users/{uid}. Merges to avoid
+// wiping unrelated fields. Stamps grantedBy + grantedAt for audit.
+async function setUserSubscription(uid, active) {
+  const patch = {
+    subscriptionStatus: active ? "active" : "none",
+    plan: active ? "manual" : "free",
+  };
+  if (active) {
+    patch.subscriptionGrantedBy = currentUser.uid;
+    patch.subscriptionGrantedAt = serverTimestamp();
+  } else {
+    patch.subscriptionRevokedBy = currentUser.uid;
+    patch.subscriptionRevokedAt = serverTimestamp();
+  }
+  await setDoc(doc(fbFirestore, "users", uid), patch, { merge: true });
+}
+
+// Bulk-grant: iterates the cached list, sets active on any user not already
+// active. Uses a WriteBatch for atomicity (up to 500 users per batch —
+// unlikely to overflow, but chunk if it ever does).
+async function grantSubsToAllUsers() {
+  if (!isAdminUser(currentUser)) return;
+  const btn = document.getElementById("btn-admin-subs-grant-all");
+  const toGrant = adminSubsUsersCache.filter(
+    ({ data }) => !_ACTIVE_SUB_STATES.has((data.subscriptionStatus || "").toLowerCase())
+  );
+  if (toGrant.length === 0) {
+    showAdminSubsMsg("Every user is already subscribed.", "success");
+    return;
+  }
+  if (!confirm(`Grant an active subscription to ${toGrant.length} users?`)) return;
+  btn.disabled = true;
+  const savedLabel = btn.textContent;
+  btn.textContent = "Granting…";
+  try {
+    // Chunk into batches of 400 to stay well under Firestore's 500-op limit.
+    for (let i = 0; i < toGrant.length; i += 400) {
+      const chunk = toGrant.slice(i, i + 400);
+      const batch = writeBatch(fbFirestore);
+      chunk.forEach(({ id }) => {
+        batch.set(
+          doc(fbFirestore, "users", id),
+          {
+            subscriptionStatus: "active",
+            plan: "manual",
+            subscriptionGrantedBy: currentUser.uid,
+            subscriptionGrantedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+      await batch.commit();
+      // Reflect the change in the in-memory cache so the UI re-renders correctly.
+      chunk.forEach(({ data }) => (data.subscriptionStatus = "active"));
+    }
+    showAdminSubsMsg(`Granted subscription to ${toGrant.length} users.`, "success");
+    // Re-render with current filter still applied.
+    const q = adminSubsSearchInput.value.trim().toLowerCase();
+    renderAdminSubsRows(filterAdminSubsCache(q));
+  } catch (err) {
+    console.error("grantSubsToAllUsers failed:", err);
+    showAdminSubsMsg(`Failed: ${err.code || err.message}`, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = savedLabel;
+  }
 }
 
 // ---------- Coach invite flow (Phase 2) ----------
