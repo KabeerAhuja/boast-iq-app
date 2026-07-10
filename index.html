@@ -6043,6 +6043,17 @@ async function handleFile(file) {
       headers: await authHeaders(),
       body: JSON.stringify({ filename: file.name, video_key: videoKey }),
     });
+    if (!jobResp.ok) {
+      let detail = `HTTP ${jobResp.status}`;
+      try {
+        const errBody = await jobResp.json();
+        detail = errBody.detail || errBody.error || detail;
+      } catch (_) { /* body wasn't JSON */ }
+      if (jobResp.status === 402) {
+        throw new Error("Subscription required — ask an admin to grant access, then try again.");
+      }
+      throw new Error(`Could not create job: ${detail}`);
+    }
     const jobData = await jobResp.json();
     jobId = jobData.job_id;
 
@@ -6842,6 +6853,17 @@ async function spawnGameJobs() {
       headers: await authHeaders(),
       body: JSON.stringify({ filename: originalFileName || "video.mp4", video_key: gvk }),
     });
+    if (!jr.ok) {
+      let detail = `HTTP ${jr.status}`;
+      try {
+        const errBody = await jr.json();
+        detail = errBody.detail || errBody.error || detail;
+      } catch (_) {}
+      if (jr.status === 402) {
+        throw new Error(`Subscription required for game ${i + 1} — ask an admin to grant access.`);
+      }
+      throw new Error(`Could not create job for game ${i + 1}: ${detail}`);
+    }
     const { job_id: gameJobId } = await jr.json();
 
     // Fire prepare (returns immediately with call_id — actual work happens
