@@ -3544,7 +3544,7 @@
 
 <div class="header">
   <div class="header-left">
-    <h1>BoastIQ Tracker</h1>
+    <h1>BoastIQ</h1>
     <button class="btn-back" id="btn-back-to-videos" style="display:none;">← My Videos</button>
   </div>
   <div class="header-right">
@@ -5462,6 +5462,7 @@ document.getElementById("btn-share-link-copy").addEventListener("click", handleS
 const upgradeModal = document.getElementById("upgrade-modal");
 let _stripe = null;            // cached Stripe.js instance
 let _upgradeElements = null;   // Elements instance for the current attempt
+let _upgradeMode = null;       // "setup" (trial → save card) or "payment"
 let _upgradeSubmitting = false;
 
 document.getElementById("btn-close-upgrade").addEventListener("click", () => { if (!_upgradeSubmitting) closeUpgradeModal(); });
