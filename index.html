@@ -2001,6 +2001,24 @@
     font-size: 14px;
   }
 
+  /* Phones: shrink the calendar cells + profile card so the page fits
+     without scrolling the profile picture out of view. */
+  @media (max-width: 640px) {
+    .profile-card { padding: 20px; }
+    .profile-photo-wrap,
+    .profile-photo-img,
+    .profile-photo-placeholder { width: 72px; height: 72px; }
+    .profile-photo-placeholder { font-size: 28px; }
+    .profile-name { font-size: 24px; }
+    .calendar-grid { gap: 4px; }
+    .calendar-day {
+      aspect-ratio: 1 / 0.72;
+      border-radius: 7px;
+      font-size: 12px;
+    }
+    .calendar-day .day-count { font-size: 8px; }
+  }
+
   .btn-signout {
     font-family: 'Space Grotesk', sans-serif;
     font-size: 13px;
@@ -2876,6 +2894,7 @@
     color: var(--text);
     margin-bottom: 6px;
   }
+  .upgrade-trial-tag { color: var(--accent); }
   .upgrade-blurb { color: var(--text-dim); font-size: 14px; line-height: 1.5; }
   .upgrade-features {
     list-style: none;
@@ -3780,8 +3799,8 @@
     </div>
 
     <div class="share-section">
-      <div class="upgrade-price"><span id="upgrade-price-amount"></span></div>
-      <div class="upgrade-blurb">Unlock unlimited match uploads and full automated analysis. Cancel anytime.</div>
+      <div class="upgrade-price"><span class="upgrade-trial-tag">7 days free</span>, then <span id="upgrade-price-amount"></span></div>
+      <div class="upgrade-blurb">Unlock unlimited match uploads and full automated analysis. Your card won't be charged until the trial ends — cancel anytime before then.</div>
       <ul class="upgrade-features">
         <li>Unlimited video uploads &amp; tracking</li>
         <li>Full shot, rally &amp; heatmap stats</li>
@@ -5493,7 +5512,7 @@ async function openUpgradeModal() {
   clearUpgradeMsg();
   const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
   subscribeBtn.disabled = true;
-  subscribeBtn.textContent = "Subscribe";
+  subscribeBtn.textContent = "Start 7-day free trial";
   document.getElementById("upgrade-payment-element").innerHTML = "";
   upgradeModal.style.display = "flex";
 
@@ -5521,7 +5540,7 @@ async function openUpgradeModal() {
       const detail = (await resp.json().catch(() => ({}))).detail || resp.status;
       throw new Error(detail);
     }
-    ({ clientSecret } = await resp.json());
+    ({ clientSecret, mode: _upgradeMode } = await resp.json());
   } catch (err) {
     console.error("create-subscription failed:", err);
     upgradeMsg("Couldn't start checkout: " + (err.message || err) + ". Please try again.", "error");
@@ -5547,31 +5566,34 @@ async function handleUpgradeSubscribe() {
   subscribeBtn.textContent = "Processing…";
   clearUpgradeMsg();
 
-  const { error } = await _stripe.confirmPayment({
-    elements: _upgradeElements,
-    confirmParams: { return_url: window.location.href },
-    redirect: "if_required",
-  });
+  // Trial subscriptions have a $0 first invoice, so we save the card via a
+  // SetupIntent (confirmSetup); a trial-less subscription confirms the first
+  // charge instead (confirmPayment).
+  const confirmParams = { return_url: window.location.href };
+  const { error } = _upgradeMode === "setup"
+    ? await _stripe.confirmSetup({ elements: _upgradeElements, confirmParams, redirect: "if_required" })
+    : await _stripe.confirmPayment({ elements: _upgradeElements, confirmParams, redirect: "if_required" });
 
   if (error) {
-    console.warn("confirmPayment error:", error);
-    upgradeMsg(error.message || "Payment failed. Please check your card and try again.", "error");
+    console.warn("confirm error:", error);
+    upgradeMsg(error.message || "We couldn't verify your card. Please check the details and try again.", "error");
     subscribeBtn.disabled = false;
-    subscribeBtn.textContent = "Subscribe";
+    subscribeBtn.textContent = "Start 7-day free trial";
     _upgradeSubmitting = false;
     return;
   }
 
-  // Card confirmed in-page. Wait for the Stripe webhook to flip Firestore state.
-  upgradeMsg("Payment received — activating your subscription…", "success");
+  // Card confirmed in-page. Wait for the Stripe webhook to flip Firestore state
+  // to `trialing` (access granted immediately; first charge is in 7 days).
+  upgradeMsg("Card saved — starting your free trial…", "success");
   const activated = await pollForActiveSub();
   _upgradeSubmitting = false;
   if (activated) {
     closeUpgradeModal();
     resumePendingUpload();
   } else {
-    upgradeMsg("Payment succeeded, but activation is taking a moment. Refresh the page shortly — you won't be charged again.", "info");
-    subscribeBtn.textContent = "Subscribe";
+    upgradeMsg("Your card was saved, but activation is taking a moment. Refresh the page shortly — you won't be charged during the trial.", "info");
+    subscribeBtn.textContent = "Start 7-day free trial";
   }
 }
 
