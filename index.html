@@ -3428,6 +3428,12 @@
   window.__IS_DEMO__ = __params.has('demo');
   window.__IS_TRIAL__ = __params.has('trial');
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
+  // Direct public download URL for the demo source video. Uses the Firebase Storage
+  // download-token endpoint, which is a public capability URL: it bypasses the Storage
+  // security rules (so anonymous visitors can play it) and serves video/mp4 with HTTP
+  // range support (206) for Safari. NOTE: we deliberately do NOT use getDownloadURL()
+  // in demo mode — that does a rules-gated metadata read first and 403s for anon users.
+  window.__DEMO_VIDEO_URL__ = 'https://firebasestorage.googleapis.com/v0/b/boastiq.firebasestorage.app/o/uploaded-videos%2Fconrad_tall_dude_1_74492d1a_2026-07-03_17-39-34.mp4?alt=media&token=d7be742a-7208-41d7-939b-89bbf5d233a8';
   if (window.__IS_DEMO__) document.body.classList.add('demo-mode');
   if (window.__IS_TRIAL__) document.body.classList.add('trial-mode');
 </script>
@@ -3842,11 +3848,15 @@
       <div><strong>Drop video here</strong> or tap to choose from files or camera roll</div>
       <p>MP4 or MOV</p>
       <!--
-        accept="video/*" lets iOS / Android show the native picker with
-        Photo Library / Take Video / Choose Files options. handleFile()
+        accept="video/*" (MIME wildcard ONLY — no explicit extensions and no
+        `capture` attribute) is what makes iOS Safari show the full native sheet:
+        Photo Library (camera roll) + Take Video + Browse (Files). Mixing in
+        extensions like .mov here causes iOS to suppress the Photo Library and
+        only offer Browse, and adding `capture` would force the camera. On macOS
+        the same input opens Finder filtered to video files. handleFile()
         validates the file is actually .mp4 / .mov before uploading.
       -->
-      <input type="file" id="file-input" accept="video/*,.mp4,.mov,.MOV">
+      <input type="file" id="file-input" accept="video/*">
     </div>
     <div class="progress-bar-wrap" id="upload-progress">
       <div class="progress-bar-bg"><div class="progress-bar-fill" id="upload-fill"></div></div>
@@ -4034,7 +4044,7 @@
       <div class="dash-left">
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
-            <video id="pv-video"></video>
+            <video id="pv-video" playsinline webkit-playsinline preload="metadata"></video>
             <button class="dash-viewer-menu-btn" id="dash-viewer-menu-btn" type="button" title="Point options" aria-label="Point options" aria-haspopup="true" aria-expanded="false">⋮</button>
             <div class="dash-viewer-menu" id="dash-viewer-menu" role="menu" aria-hidden="true">
               <button class="dash-menu-item" id="dash-menu-star" type="button" role="menuitem">
@@ -4538,7 +4548,7 @@ const API = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
 const STRIPE_PUBLISHABLE_KEY = "pk_test_REPLACE_ME";
 // Display-only price copy for the upgrade modal (the real amount is enforced by
 // the Stripe Price on the backend). Update to match your price.
-const STRIPE_PRICE_DISPLAY = "$19/month";
+const STRIPE_PRICE_DISPLAY = "$25/month";
 // True once the signed-in user's users/{uid}.subscriptionStatus grants access.
 function hasActiveSub() {
   return ["active", "trialing"].includes(currentUserDoc?.subscriptionStatus);
@@ -10113,13 +10123,11 @@ if (window.__IS_DEMO__) {
   (async () => {
     try {
       videoKey = window.__DEMO_VIDEO_KEY__;
-      // Public-read storage rules let this resolve without auth
-      try {
-        videoBlobUrl = await getDownloadURL(ref(fbStorage, `uploaded-videos/${videoKey}.mp4`));
-      } catch (err) {
-        console.warn("[DEMO] source video URL fetch failed:", err);
-        videoBlobUrl = null;
-      }
+      // Use the public tokenized URL directly (see __DEMO_VIDEO_URL__ above).
+      // getDownloadURL() would 403 for anonymous visitors because it does a
+      // rules-gated metadata read first — that's why the demo was blank for everyone
+      // except the signed-in owner.
+      videoBlobUrl = window.__DEMO_VIDEO_URL__ || null;
       // Fallback labels shown before index.json loads (match the source dataset)
       playerConfig = {
         player_1: { name: "Conrad", handedness: "right" },
