@@ -5971,7 +5971,12 @@ uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.cl
 uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("dragover"));
 uploadZone.addEventListener("drop", e => { e.preventDefault(); uploadZone.classList.remove("dragover"); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener("change", () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
-const ACCEPTED_VIDEO_EXTS = [".mp4", ".mov"];
+// Broad list of container extensions we accept. The backend normalizes
+// whatever comes in to web-safe H.264, so we err toward accepting anything
+// plausibly a video rather than hard-blocking. macOS/iOS Photos often hands
+// the file a name with no extension and an empty MIME type, so extension/MIME
+// checks alone are not reliable — see handleFile's validation.
+const ACCEPTED_VIDEO_EXTS = [".mp4", ".mov", ".m4v", ".qt", ".hevc", ".mpg", ".mpeg", ".webm", ".mkv", ".avi", ".3gp", ".3g2", ".mts", ".m2ts"];
 const TRIAL_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 0.5 GB cap for ?trial only
 
 // Module-level handles to in-flight upload + backend prepare so Start Tracking can await them.
@@ -6084,9 +6089,26 @@ function uploadViaSignedPut(signedUrl, file, onProgress) {
 
 async function handleFile(file) {
   const nameLower = (file.name || "").toLowerCase();
+  const mime = file.type || "";
   const extOk = ACCEPTED_VIDEO_EXTS.some(ext => nameLower.endsWith(ext));
-  const mimeOk = file.type && file.type.startsWith("video/");
-  if (!mimeOk && !extOk) { alert("Please upload an MP4 or MOV video file."); return; }
+  const mimeVideo = mime.startsWith("video/");
+  // macOS/iOS Photos frequently hands a File with an EMPTY mime type and a name
+  // with no usable extension (e.g. camera-roll videos). Since the picker is
+  // accept="video/*" (OS-filtered to videos) and the backend re-encodes anything
+  // to web-safe H.264, we only reject files we can POSITIVELY identify as
+  // non-video: a concrete non-video MIME, or a known non-video extension. When
+  // the type is empty/unknown and the extension isn't recognizably non-video, we
+  // let it through and let downstream processing validate the actual codec.
+  const NON_VIDEO_EXTS = [".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".pdf", ".doc", ".docx", ".txt", ".zip", ".mp3", ".wav", ".m4a", ".aac"];
+  const looksNonVideo =
+    (mime && !mimeVideo && !mime.startsWith("application/octet-stream")) ||
+    NON_VIDEO_EXTS.some(ext => nameLower.endsWith(ext));
+  if (looksNonVideo && !mimeVideo && !extOk) {
+    console.warn("[upload] rejected file", { name: file.name, type: file.type, size: file.size });
+    alert("That doesn't look like a video file. Please choose an MP4 or MOV (or another video) from your files or camera roll.");
+    return;
+  }
+  console.log("[upload] accepted file", { name: file.name, type: file.type, size: file.size });
   if (!currentUser) { alert("You must be signed in to upload."); return; }
   // Paywall: uploading/analyzing requires an active subscription. Trial mode
   // (the one free anonymous upload lead-magnet) is exempt and keeps its own gate.
