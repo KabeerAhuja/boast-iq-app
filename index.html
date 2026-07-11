@@ -238,7 +238,32 @@
   }
   
   .upload-zone input { display: none; }
-  
+
+  .btn-choose-video {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 12px 28px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #06231f;
+    background: var(--accent, #37d3b5);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease;
+  }
+  .btn-choose-video:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-choose-video:active { transform: translateY(0); }
+
+  .upload-zone .upload-hint {
+    max-width: 460px;
+    margin: 12px auto 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    opacity: 0.8;
+  }
+
   /* Progress Bar */
   .progress-bar-wrap {
     margin-top: 24px;
@@ -3950,16 +3975,18 @@
     <div class="step-desc">Upload your squash match video to begin tracking. We support MP4 and MOV files.</div>
     <div class="upload-zone" id="upload-zone">
       <div class="icon">🎬</div>
-      <div><strong>Drop video here</strong> or tap to choose from files or camera roll</div>
-      <p>MP4 or MOV</p>
+      <div><strong>Choose a video</strong> from your files or camera roll</div>
+      <button type="button" id="btn-choose-video" class="btn-choose-video">Choose Video</button>
+      <p>MP4 or MOV · or drop a file here</p>
+      <p class="upload-hint">On Mac, the picker can reach both Finder and your Photos library. Tip: pick it in the dialog rather than dragging out of Photos — dragging can make macOS re-compress the clip.</p>
       <!--
         accept="video/*" (MIME wildcard ONLY — no explicit extensions and no
         `capture` attribute) is what makes iOS Safari show the full native sheet:
         Photo Library (camera roll) + Take Video + Browse (Files). Mixing in
         extensions like .mov here causes iOS to suppress the Photo Library and
         only offer Browse, and adding `capture` would force the camera. On macOS
-        the same input opens Finder filtered to video files. handleFile()
-        validates the file is actually .mp4 / .mov before uploading.
+        the same input opens the file dialog (Finder + Photos sidebar).
+        handleFile() validates the file before uploading.
       -->
       <input type="file" id="file-input" accept="video/*">
     </div>
@@ -5967,6 +5994,10 @@ function updateOverallProgress(pct, statusText) {
 const uploadZone = document.getElementById("upload-zone");
 const fileInput = document.getElementById("file-input");
 uploadZone.addEventListener("click", () => fileInput.click());
+// Explicit button — same target as clicking the zone, but stop propagation so the
+// zone's own click handler doesn't ALSO fire (which would open the picker twice).
+const btnChooseVideo = document.getElementById("btn-choose-video");
+if (btnChooseVideo) btnChooseVideo.addEventListener("click", e => { e.stopPropagation(); fileInput.click(); });
 uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.classList.add("dragover"); });
 uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("dragover"));
 uploadZone.addEventListener("drop", e => { e.preventDefault(); uploadZone.classList.remove("dragover"); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
