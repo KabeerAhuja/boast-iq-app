@@ -4701,7 +4701,7 @@ const API = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
 const STRIPE_PUBLISHABLE_KEY = "pk_test_51RYxgCQ4Jl9ZbMmnfuwOFWB7tzKX8Gqy9ZhB04erF4aNmkWABUA5PyKyAyHkGlnssQosFPUf6I9zy3kxATiFxTdN00LL6fDIP2";
 // Display-only price copy for the upgrade modal (the real amount is enforced by
 // the Stripe Price on the backend). Update to match your price.
-const STRIPE_PRICE_DISPLAY = "$25/month";
+const STRIPE_PRICE_DISPLAY = "$35/month";
 // True once the signed-in user's users/{uid}.subscriptionStatus grants access.
 function hasActiveSub() {
   return ["active", "trialing"].includes(currentUserDoc?.subscriptionStatus);
@@ -4901,22 +4901,28 @@ async function renderMatchGroupCard(parentKey, games) {
   const firstTitle = (first.data.title || parentKey || "").replace(/\s*[—-]\s*Game\s+\d+.*$/i, "");
   const rootTitle = firstTitle || parentKey;
 
-  // Thumbnail: reuse first game's thumbnail if available
+  // Thumbnail: try (1) first game's uploaded thumbnail, (2) first game's
+  // backend-extracted first_frame.png (always present), (3) parent's
+  // first_frame.png as a last resort.
   const thumb = document.createElement("div");
   thumb.className = "video-card-thumb";
-  if (first.data.thumbnailPath) {
+  const thumbCandidates = [];
+  if (first.data.thumbnailPath) thumbCandidates.push(first.data.thumbnailPath);
+  thumbCandidates.push(`video-data/${first.key}/first_frame.png`);
+  thumbCandidates.push(`video-data/${parentKey}/first_frame.png`);
+  let loaded = false;
+  for (const path of thumbCandidates) {
     try {
-      const url = await getDownloadURL(ref(fbStorage, first.data.thumbnailPath));
+      const url = await getDownloadURL(ref(fbStorage, path));
       const img = document.createElement("img");
       img.src = url;
       img.alt = rootTitle;
       thumb.appendChild(img);
-    } catch (err) {
-      thumb.appendChild(document.createTextNode("🎬"));
-    }
-  } else {
-    thumb.appendChild(document.createTextNode("🎬"));
+      loaded = true;
+      break;
+    } catch (err) { /* try next */ }
   }
+  if (!loaded) thumb.appendChild(document.createTextNode("🎬"));
   // Blue "N games" badge
   const badge = document.createElement("div");
   badge.className = "match-group-badge";
@@ -5082,20 +5088,29 @@ async function renderVideoCard(videoKeyId, data) {
 
   const thumb = document.createElement("div");
   thumb.className = "video-card-thumb";
-  if (data.thumbnailPath) {
+  // Try three sources in order:
+  //   1. data.thumbnailPath — explicit picker-canvas thumbnail (single-game path only)
+  //   2. video-data/{key}/first_frame.png — always uploaded by backend prepare_job
+  //   3. placeholder icon
+  const thumbCandidates = [];
+  if (data.thumbnailPath) thumbCandidates.push(data.thumbnailPath);
+  thumbCandidates.push(`video-data/${videoKeyId}/first_frame.png`);
+  if (data.parentVideoKey && data.parentVideoKey !== videoKeyId) {
+    thumbCandidates.push(`video-data/${data.parentVideoKey}/first_frame.png`);
+  }
+  let loaded = false;
+  for (const path of thumbCandidates) {
     try {
-      const url = await getDownloadURL(ref(fbStorage, data.thumbnailPath));
+      const url = await getDownloadURL(ref(fbStorage, path));
       const img = document.createElement("img");
       img.src = url;
       img.alt = data.title || "thumbnail";
       thumb.appendChild(img);
-    } catch (err) {
-      console.warn("Thumbnail load failed:", err);
-      thumb.appendChild(document.createTextNode("🎬"));
-    }
-  } else {
-    thumb.appendChild(document.createTextNode("🎬"));
+      loaded = true;
+      break;
+    } catch (err) { /* try next candidate */ }
   }
+  if (!loaded) thumb.appendChild(document.createTextNode("🎬"));
 
   const isOwner = data.ownerUid === currentUser.uid;
 
