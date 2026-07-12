@@ -4336,7 +4336,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, query, where, orderBy, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp, arrayUnion, arrayRemove, limit, writeBatch, startAt, endAt } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, query, where, orderBy, getDocs, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, arrayUnion, arrayRemove, limit, writeBatch, startAt, endAt } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBa60PoCLm9ggt-7WDHBT3n_WfNggIaXKw",
@@ -4772,10 +4772,12 @@ function showStep(name) {
   btnBackToVideos.style.display = (name === "videos") ? "none" : "inline-flex";
 }
 btnBackToVideos.addEventListener("click", () => {
-  if ($steps.process.classList.contains("active")) {
+  // Only the tab actively driving a tracking job (has a live ws) should be warned.
+  if ($steps.process.classList.contains("active") && ws) {
     if (!confirm("Tracking is in progress. Leave anyway?")) return;
-    if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+    try { ws.close(); } catch (e) {} ws = null;
   }
+  stopProcessingPreview();
   goToMyVideos();
 });
 
@@ -5242,8 +5244,9 @@ document.addEventListener("click", () => closeAllVideoCardMenus());
 async function openVideo(key, data) {
   const status = data.status || "ready";
   if (status === "uploading" || status === "processing") {
-    alert(`This video is still ${status}. Try again once it's complete.`);
-    return;
+    // Let anyone (owner or a shared viewer) watch the raw video with a live
+    // status bar while the tracking pipeline runs, instead of blocking them.
+    return openProcessingPreview(key, data);
   }
   if (status === "failed") {
     alert("This video failed to process. You can re-upload it.");
@@ -5278,6 +5281,59 @@ async function openVideo(key, data) {
   }
   showStep("results");
   showResults({});
+}
+
+// ---- Processing preview (raw video + live status bar while tracking runs) ----
+let processingUnsub = null;
+function stopProcessingPreview() {
+  if (processingUnsub) { try { processingUnsub(); } catch (e) {} processingUnsub = null; }
+}
+async function openProcessingPreview(key, data) {
+  videoKey = key;
+  if (data.playerConfig) playerConfig = data.playerConfig;
+  // Viewers have no elapsed-time baseline, so keep the ETA math off (0 = disabled).
+  processingStartTime = 0;
+
+  const status0 = data.status || "processing";
+  const initialPct = typeof data.progress === "number" ? data.progress : 0;
+  updateOverallProgress(initialPct, data.statusMessage || (status0 === "uploading" ? "Uploading video…" : "Processing video…"));
+  document.getElementById("overall-eta").textContent = "";
+  document.getElementById("reprompt-section").style.display = "none";
+
+  // Load the raw uploaded video so it can be watched while the pipeline runs.
+  const preview = document.getElementById("preview-video");
+  preview.removeAttribute("src");
+  preview.load();
+  try {
+    preview.src = await getDownloadURL(ref(fbStorage, `uploaded-videos/${key}.mp4`));
+    preview.load();
+  } catch (err) {
+    // During "uploading" the raw file may not exist yet — the status bar still shows.
+    console.warn("Raw video not available yet:", err);
+  }
+
+  showStep("process");
+
+  // Live-follow the Firestore doc until the job finishes.
+  stopProcessingPreview();
+  processingUnsub = onSnapshot(doc(fbFirestore, "videos", key), (snap) => {
+    if (!snap.exists()) return;
+    const d = snap.data();
+    const status = d.status || "processing";
+    if (status === "complete") {
+      stopProcessingPreview();
+      updateOverallProgress(100, "Complete! Loading results…");
+      openVideo(key, d);
+      return;
+    }
+    if (status === "failed") {
+      stopProcessingPreview();
+      updateOverallProgress(typeof d.progress === "number" ? d.progress : initialPct, "Processing failed. You can re-upload this video.");
+      return;
+    }
+    const pct = typeof d.progress === "number" ? d.progress : initialPct;
+    updateOverallProgress(pct, d.statusMessage || (status === "uploading" ? "Uploading video…" : "Processing video…"));
+  }, (err) => console.warn("Processing preview snapshot error:", err));
 }
 
 // ---- Coach management ----
@@ -6122,13 +6178,24 @@ async function uploadThumbnail(key, sourceCanvas) {
     }, "image/jpeg", 0.85);
   });
 }
+let activeProcessingKey = null, lastProgressPersist = 0;
 function updateOverallProgress(pct, statusText) {
   pct = Math.min(100, Math.max(0, pct));
   document.getElementById("overall-pct").textContent = Math.round(pct) + "%";
   document.getElementById("overall-fill").style.width = pct + "%";
   if (statusText) document.getElementById("overall-status").textContent = statusText;
   const elapsed = (Date.now() - processingStartTime) / 1000;
-  if (pct > 2 && elapsed > 10) { const remaining = (elapsed / (pct / 100)) - elapsed; const m = Math.floor(remaining / 60), s = Math.floor(remaining % 60); document.getElementById("overall-eta").textContent = remaining > 5 ? `~${m}m ${s}s remaining` : "Almost done..."; }
+  if (processingStartTime > 0 && pct > 2 && elapsed > 10) { const remaining = (elapsed / (pct / 100)) - elapsed; const m = Math.floor(remaining / 60), s = Math.floor(remaining % 60); document.getElementById("overall-eta").textContent = remaining > 5 ? `~${m}m ${s}s remaining` : "Almost done..."; }
+  // Persist progress so shared viewers / other tabs see a live status bar (throttled).
+  if (activeProcessingKey && activeProcessingKey === videoKey) {
+    const now = Date.now();
+    if (now - lastProgressPersist > 2500) {
+      lastProgressPersist = now;
+      const update = { progress: Math.round(pct) };
+      if (statusText) update.statusMessage = statusText;
+      updateDoc(doc(fbFirestore, "videos", videoKey), update).catch(() => {});
+    }
+  }
 }
 const uploadZone = document.getElementById("upload-zone");
 const fileInput = document.getElementById("file-input");
@@ -7354,6 +7421,7 @@ async function startProcessing() {
 
   showStep("process"); processingStartTime = Date.now(); totalSrcFrames = videoMeta.total_frames; completedSrcFrames = 0;
   document.getElementById("preview-video").src = videoBlobUrl;
+  activeProcessingKey = videoKey; lastProgressPersist = 0;
   updateVideoStatus(videoKey, "processing");
 
   // Block until the source video upload finishes — prepare was already kicked off
@@ -7394,8 +7462,8 @@ function handleWsMessage(msg) {
     case "segment_start": currentSegSrcStart = msg.src_start; currentSegSrcFrames = msg.src_frames; currentSegPct = 0; updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, "Tracking players..."); break;
     case "segment_complete": completedSrcFrames = currentSegSrcStart + currentSegSrcFrames; updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, "Tracking players..."); break;
     case "needs_reprompt": showReprompt(msg); break;
-    case "complete": updateOverallProgress(100, "Complete!"); document.getElementById("overall-eta").textContent = ""; updateVideoStatus(videoKey, "complete"); showResults(msg); break;
-    case "error": updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, `Error: ${msg.message}`); updateVideoStatus(videoKey, "failed"); break;
+    case "complete": activeProcessingKey = null; updateOverallProgress(100, "Complete!"); document.getElementById("overall-eta").textContent = ""; updateVideoStatus(videoKey, "complete"); showResults(msg); break;
+    case "error": activeProcessingKey = null; updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, `Error: ${msg.message}`); updateVideoStatus(videoKey, "failed"); break;
   }
 }
 function showReprompt(msg) {
