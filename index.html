@@ -2991,6 +2991,21 @@
   .upgrade-msg.success { background: rgba(60, 200, 120, 0.12); color: #7dffb0; }
   .upgrade-msg.info { background: var(--surface); color: var(--text-dim); }
 
+  .upgrade-promo { margin-top: 14px; }
+  .upgrade-promo-toggle {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--accent); font-size: 13px; text-decoration: underline;
+  }
+  .upgrade-promo-toggle[hidden] { display: none; }
+  .upgrade-promo-row { display: flex; gap: 8px; margin-top: 8px; }
+  .upgrade-promo-row .form-input { flex: 1; text-transform: uppercase; }
+  .upgrade-promo-msg {
+    margin-top: 8px; font-size: 13px; line-height: 1.4;
+    padding: 8px 10px; border-radius: 8px;
+  }
+  .upgrade-promo-msg.error { background: rgba(220, 60, 60, 0.12); color: #ff8a8a; }
+  .upgrade-promo-msg.success { background: rgba(60, 200, 120, 0.12); color: #7dffb0; }
+
   .share-section {
     padding: 18px 24px;
     border-bottom: 1px solid var(--border);
@@ -3875,6 +3890,14 @@
       <div class="form-label">Payment details</div>
       <!-- Stripe Payment Element mounts here -->
       <div id="upgrade-payment-element"></div>
+      <div class="upgrade-promo">
+        <button type="button" id="upgrade-promo-toggle" class="upgrade-promo-toggle">Have a promo code?</button>
+        <div id="upgrade-promo-row" class="upgrade-promo-row" style="display:none;">
+          <input type="text" id="upgrade-promo-input" class="form-input" placeholder="Promo code" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button type="button" class="btn" id="btn-apply-promo">Apply</button>
+        </div>
+        <div class="upgrade-promo-msg" id="upgrade-promo-msg" style="display:none;"></div>
+      </div>
       <div class="upgrade-msg" id="upgrade-msg" style="display:none;"></div>
       <button class="btn btn-primary" id="btn-upgrade-subscribe" style="width:100%;margin-top:14px;" disabled>Subscribe</button>
     </div>
@@ -5561,11 +5584,60 @@ const upgradeModal = document.getElementById("upgrade-modal");
 let _stripe = null;            // cached Stripe.js instance
 let _upgradeElements = null;   // Elements instance for the current attempt
 let _upgradeMode = null;       // "setup" (trial → save card) or "payment"
+let _upgradeSubId = null;      // Stripe subscription id for the current attempt
+let _promoApplied = false;     // a valid promo code has been attached
 let _upgradeSubmitting = false;
 
 document.getElementById("btn-close-upgrade").addEventListener("click", () => { if (!_upgradeSubmitting) closeUpgradeModal(); });
 upgradeModal.addEventListener("click", (e) => { if (e.target === upgradeModal && !_upgradeSubmitting) closeUpgradeModal(); });
 document.getElementById("btn-upgrade-subscribe").addEventListener("click", handleUpgradeSubscribe);
+document.getElementById("upgrade-promo-toggle").addEventListener("click", () => {
+  document.getElementById("upgrade-promo-row").style.display = "flex";
+  document.getElementById("upgrade-promo-toggle").hidden = true;
+  document.getElementById("upgrade-promo-input").focus();
+});
+document.getElementById("btn-apply-promo").addEventListener("click", handleApplyPromo);
+document.getElementById("upgrade-promo-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); handleApplyPromo(); }
+});
+
+function promoMsg(text, kind) {
+  const el = document.getElementById("upgrade-promo-msg");
+  el.style.display = "block";
+  el.className = `upgrade-promo-msg ${kind}`;
+  el.textContent = text;
+}
+
+async function handleApplyPromo() {
+  if (_promoApplied) return;
+  const input = document.getElementById("upgrade-promo-input");
+  const applyBtn = document.getElementById("btn-apply-promo");
+  const code = (input.value || "").trim();
+  if (!code) { promoMsg("Enter a code first.", "error"); return; }
+  if (!_upgradeSubId) { promoMsg("Please wait for checkout to finish loading.", "error"); return; }
+  applyBtn.disabled = true;
+  promoMsg("Checking…", "success");
+  try {
+    const resp = await fetch(`${API}/api/apply-promo`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({ subscriptionId: _upgradeSubId, code }),
+    });
+    if (!resp.ok) {
+      const detail = (await resp.json().catch(() => ({}))).detail || "";
+      throw new Error(detail.startsWith("invalid_promo") ? "That code isn't valid." : "Couldn't apply that code.");
+    }
+    const data = await resp.json();
+    _promoApplied = true;
+    const dollars = (data.newMonthlyCents / 100).toFixed(0);
+    promoMsg(`✓ Code applied — $${dollars}/month after your trial.`, "success");
+    input.disabled = true;
+    applyBtn.textContent = "Applied";
+  } catch (err) {
+    promoMsg(err.message || "Couldn't apply that code.", "error");
+    applyBtn.disabled = false;
+  }
+}
 
 function upgradeMsg(text, kind) {
   const el = document.getElementById("upgrade-msg");
@@ -5585,10 +5657,25 @@ function closeUpgradeModal() {
   document.getElementById("upgrade-payment-element").innerHTML = "";
 }
 
+function resetPromoUI() {
+  _promoApplied = false;
+  const row = document.getElementById("upgrade-promo-row");
+  const toggle = document.getElementById("upgrade-promo-toggle");
+  const input = document.getElementById("upgrade-promo-input");
+  const applyBtn = document.getElementById("btn-apply-promo");
+  const msg = document.getElementById("upgrade-promo-msg");
+  if (row) row.style.display = "none";
+  if (toggle) toggle.hidden = false;
+  if (input) { input.value = ""; input.disabled = false; }
+  if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
+  if (msg) { msg.style.display = "none"; msg.textContent = ""; }
+}
+
 async function openUpgradeModal() {
   if (!currentUser) { alert("Please sign in first."); return; }
   document.getElementById("upgrade-price-amount").textContent = STRIPE_PRICE_DISPLAY;
   clearUpgradeMsg();
+  resetPromoUI();
   const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
   subscribeBtn.disabled = true;
   subscribeBtn.textContent = "Start 7-day free trial";
@@ -5619,7 +5706,7 @@ async function openUpgradeModal() {
       const detail = (await resp.json().catch(() => ({}))).detail || resp.status;
       throw new Error(detail);
     }
-    ({ clientSecret, mode: _upgradeMode } = await resp.json());
+    ({ clientSecret, mode: _upgradeMode, subscriptionId: _upgradeSubId } = await resp.json());
   } catch (err) {
     console.error("create-subscription failed:", err);
     upgradeMsg("Couldn't start checkout: " + (err.message || err) + ". Please try again.", "error");
