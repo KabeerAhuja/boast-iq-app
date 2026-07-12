@@ -2872,6 +2872,20 @@
     right: 0;
     height: 3px;
     background: linear-gradient(90deg, var(--purple), var(--blue), var(--accent));
+    z-index: 4;
+  }
+
+  /* Upgrade modal can be tall (Stripe Payment Element) — let it scroll inside
+     the viewport with the header/close button pinned so everything's reachable. */
+  #upgrade-modal .modal-card {
+    max-height: 88vh;
+    overflow-y: auto;
+  }
+  #upgrade-modal .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--surface-solid);
   }
 
   .modal-header {
