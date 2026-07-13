@@ -5442,8 +5442,10 @@ async function openVideo(key, data) {
 
 // ---- Processing preview (raw video + live status bar while tracking runs) ----
 let processingUnsub = null;
+let previewPoller = null;
 function stopProcessingPreview() {
   if (processingUnsub) { try { processingUnsub(); } catch (e) {} processingUnsub = null; }
+  if (previewPoller) { try { previewPoller.stop(); } catch (e) {} previewPoller = null; }
 }
 async function openProcessingPreview(key, data) {
   videoKey = key;
@@ -5452,9 +5454,8 @@ async function openProcessingPreview(key, data) {
   processingStartTime = 0;
 
   const status0 = data.status || "processing";
-  const initialPct = typeof data.progress === "number" ? data.progress : 0;
-  updatePhaseStepsUI(phaseFromPct(initialPct));
-  updateOverallProgress(initialPct, data.statusMessage || (status0 === "uploading" ? "Uploading video…" : "Processing video…"));
+  resetPhases();
+  startPhaseCreep(0, 0.05, 0.85, status0 === "uploading" ? "Uploading video…" : "Preparing video…");
   document.getElementById("overall-eta").textContent = "";
   document.getElementById("reprompt-section").style.display = "none";
 
@@ -5475,26 +5476,61 @@ async function openProcessingPreview(key, data) {
 
   showStep("process");
 
-  // Live-follow the Firestore doc until the job finishes.
   stopProcessingPreview();
-  processingUnsub = onSnapshot(doc(fbFirestore, "videos", key), (snap) => {
-    if (!snap.exists()) return;
-    const d = snap.data();
-    const status = d.status || "processing";
-    if (status === "complete") {
-      stopProcessingPreview();
-      updateOverallProgress(100, "Complete! Loading results…");
-      openVideo(key, d);
-      return;
+  let done = false;
+
+  // When tracking finishes, keep the "Calculating Stats" phase visible until the
+  // derived stats exist, then open the full results page.
+  const finish = async () => {
+    if (done) return; done = true;
+    stopProcessingPreview();
+    startPhaseCreep(2, 0.05, 0.93, "Rendering clips & calculating stats…");
+    const k = key;
+    for (let i = 0; i < 90; i++) {
+      try { const r = await fetch(`${API}/api/points/${k}`); if (r.ok) break; } catch (_) {}
+      if (videoKey !== k) { stopPhaseCreep(); return; } // user navigated away
+      await new Promise((res) => setTimeout(res, 4000));
     }
+    if (videoKey !== k) { stopPhaseCreep(); return; }
+    stopPhaseCreep();
+    setPhaseProgress(2, 1, "Done!");
+    try {
+      const snap = await getDoc(doc(fbFirestore, "videos", k));
+      openVideo(k, snap.exists() ? snap.data() : data);
+    } catch (_) { openVideo(k, data); }
+  };
+
+  // Authoritative progress from the backend tracking-status file. Works for any
+  // job (single-game, multi-game, reopened in a fresh page) regardless of which
+  // tab — if any — is driving the WebSocket, since the backend writes it.
+  previewPoller = pollTrackingStatus(key, (msg) => {
+    if (done) return;
+    if (msg.type === "progress" || msg.type === "segment_start") {
+      const frac = (msg.pct || 0) / 100;
+      if (frac > 0 || (msg.frames_total > 0 && msg.frames_done > 0)) {
+        stopPhaseCreep();
+        setPhaseProgress(1, frac, "Tracking players…");
+      } else {
+        setPhaseSubText("Preparing video on server…"); // still phase 0; keep creeping
+      }
+    } else if (msg.type === "complete") {
+      finish();
+    } else if (msg.type === "error") {
+      stopProcessingPreview();
+      updateOverallProgress(0, "Processing failed. You can re-upload this video.");
+    }
+  });
+
+  // Firestore doc drives the terminal transition too (belt & suspenders): the
+  // server-side status writer flips status even if no tab is polling.
+  processingUnsub = onSnapshot(doc(fbFirestore, "videos", key), (snap) => {
+    if (done || !snap.exists()) return;
+    const status = (snap.data().status) || "processing";
+    if (status === "complete") { finish(); return; }
     if (status === "failed") {
       stopProcessingPreview();
-      updateOverallProgress(typeof d.progress === "number" ? d.progress : initialPct, "Processing failed. You can re-upload this video.");
-      return;
+      updateOverallProgress(0, "Processing failed. You can re-upload this video.");
     }
-    const pct = typeof d.progress === "number" ? d.progress : initialPct;
-    updatePhaseStepsUI(phaseFromPct(pct));
-    updateOverallProgress(pct, d.statusMessage || (status === "uploading" ? "Uploading video…" : "Processing video…"));
   }, (err) => console.warn("Processing preview snapshot error:", err));
 }
 
