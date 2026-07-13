@@ -2950,6 +2950,40 @@
 
   .modal-close:hover { color: var(--text); }
 
+  .plan-toggle {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
+  .plan-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .plan-toggle-btn.active { background: var(--accent); color: #06231f; }
+  .plan-toggle-btn:disabled { cursor: default; opacity: .6; }
+  .plan-save {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.15);
+    color: inherit;
+  }
+  .plan-toggle-btn:not(.active) .plan-save { background: rgba(120,220,200,.15); color: var(--accent); }
   .upgrade-price {
     font-family: 'Space Grotesk', sans-serif;
     font-size: 26px;
@@ -3455,6 +3489,7 @@
   .dash-court-line { stroke: rgba(255,255,255,0.25); stroke-width: 1.5; fill: none; }
   .dash-court-bg { fill: rgba(0,240,255,0.02); }
   .dash-tin { fill: rgba(255,46,147,0.15); stroke: rgba(255,46,147,0.4); }
+  .dash-egg { fill: rgba(245,215,90,0.16); stroke: rgba(245,215,90,0.75); stroke-width: 2; }
   .dash-trail-p1 { stroke: var(--blue, #00f0ff); fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
   .dash-trail-p2 { stroke: var(--red, #ff2e93); fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
   .dash-head-p1 { fill: var(--blue, #00f0ff); filter: drop-shadow(0 0 8px var(--blue, #00f0ff)); }
@@ -3610,6 +3645,8 @@
   // Arrived from a paid "Start 7-day trial" CTA: after Google sign-in, jump
   // straight to Stripe checkout instead of waiting for the first upload.
   window.__WANT_CHECKOUT__ = __params.has('checkout');
+  // Optional billing period preselected from the landing page (monthly|annual).
+  window.__CHECKOUT_PLAN__ = __params.get('plan') || null;
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
   // Direct public download URL for the demo source video. Uses the Firebase Storage
   // download-token endpoint, which is a public capability URL: it bypasses the Storage
@@ -3880,6 +3917,10 @@
     </div>
 
     <div class="share-section">
+      <div class="plan-toggle" id="plan-toggle" role="tablist" aria-label="Billing period">
+        <button type="button" class="plan-toggle-btn active" data-plan="monthly" role="tab">Monthly</button>
+        <button type="button" class="plan-toggle-btn" data-plan="annual" role="tab">Yearly <span class="plan-save">Save $120</span></button>
+      </div>
       <div class="upgrade-price"><span class="upgrade-trial-tag">7 days free</span>, then <span id="upgrade-price-amount"></span></div>
       <div class="upgrade-blurb">Unlock unlimited match uploads and full automated analysis. Your card won't be charged until the trial ends — cancel anytime before then.</div>
       <ul class="upgrade-features">
@@ -4292,6 +4333,7 @@
             <div class="dash-shot-filter">
               <label><input type="checkbox" class="dash-filter-p1" checked><span class="dash-dot dash-dot-p1"></span><span class="dash-fname-p1">You</span></label>
               <label><input type="checkbox" class="dash-filter-p2" checked><span class="dash-dot dash-dot-p2"></span><span class="dash-fname-p2">Opp</span></label>
+              <label><input type="checkbox" id="dash-filter-egg"><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
             </div>
           </div>
           <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
@@ -4721,7 +4763,7 @@ onAuthStateChanged(fbAuth, async (user) => {
       window.__WANT_CHECKOUT__ = false;
       clearCheckoutParam();
       goToMyVideos();
-      if (!hasActiveSub()) openUpgradeModal();
+      if (!hasActiveSub()) openUpgradeModal(window.__CHECKOUT_PLAN__);
       return;
     }
     goToMyVideos();
@@ -4762,8 +4804,13 @@ const API = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
 // live only on the backend (Modal `stripe-secret`).
 const STRIPE_PUBLISHABLE_KEY = "pk_live_51RYxg7Lhz0zSQC5ZgvvhiKhPBaoSjtejLEzp60pjgfFp6bzu9bIpn11KHZEPGk3xZBdUL8O6B8kcYQj5FATrBnVr00hhk7fw6X";
 // Display-only price copy for the upgrade modal (the real amount is enforced by
-// the Stripe Price on the backend). Update to match your price.
-const STRIPE_PRICE_DISPLAY = "$35/month";
+// the Stripe Price on the backend). Update to match your prices.
+const PLAN_INFO = {
+  monthly: { display: "$35/month", param: "monthly" },
+  annual:  { display: "$300/year ($25/mo — save $120)", param: "annual" },
+};
+const STRIPE_PRICE_DISPLAY = PLAN_INFO.monthly.display; // back-compat alias
+let _selectedPlan = "monthly";
 // True once the signed-in user's users/{uid}.subscriptionStatus grants access.
 function hasActiveSub() {
   return ["active", "trialing"].includes(currentUserDoc?.subscriptionStatus);
@@ -5743,22 +5790,51 @@ function resetPromoUI() {
   if (msg) { msg.style.display = "none"; msg.textContent = ""; }
 }
 
-async function openUpgradeModal() {
-  if (!currentUser) { alert("Please sign in first."); return; }
-  document.getElementById("upgrade-price-amount").textContent = STRIPE_PRICE_DISPLAY;
-  clearUpgradeMsg();
-  resetPromoUI();
-  const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
-  subscribeBtn.disabled = true;
-  subscribeBtn.textContent = "Start 7-day free trial";
-  document.getElementById("upgrade-payment-element").innerHTML = "";
-  upgradeModal.style.display = "flex";
+// Reflect the selected plan in the toggle buttons + price line.
+function updatePlanToggleUI() {
+  document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.plan === _selectedPlan);
+  });
+  const info = PLAN_INFO[_selectedPlan] || PLAN_INFO.monthly;
+  document.getElementById("upgrade-price-amount").textContent = info.display;
+}
 
+// Wire the Monthly/Yearly toggle: switching plans re-creates the subscription so
+// the Payment Element confirms against the correct price.
+document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (_upgradeSubmitting) return;               // don't switch mid-payment
+    const plan = btn.dataset.plan === "annual" ? "annual" : "monthly";
+    if (plan === _selectedPlan) return;
+    loadCheckoutForPlan(plan);
+  });
+});
+
+async function openUpgradeModal(plan) {
+  if (!currentUser) { alert("Please sign in first."); return; }
+  upgradeModal.style.display = "flex";
   if (typeof Stripe === "undefined") {
     upgradeMsg("Payment library failed to load. Check your connection and retry.", "error");
     return;
   }
   if (!_stripe) _stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+  const start = (plan === "annual" || plan === "yearly") ? "annual" : "monthly";
+  await loadCheckoutForPlan(start);
+}
+
+// Create (or re-create) the subscription for `plan` and mount its Payment Element.
+// Called on modal open and whenever the billing-period toggle changes.
+async function loadCheckoutForPlan(plan) {
+  _selectedPlan = (plan === "annual" || plan === "yearly") ? "annual" : "monthly";
+  updatePlanToggleUI();
+  clearUpgradeMsg();
+  resetPromoUI();
+  const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
+  subscribeBtn.disabled = true;
+  subscribeBtn.textContent = "Start 7-day free trial";
+  _upgradeElements = null;
+  document.getElementById("upgrade-payment-element").innerHTML = "";
+  document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = true));
 
   upgradeMsg("Setting up secure checkout…", "info");
   let clientSecret;
@@ -5766,6 +5842,7 @@ async function openUpgradeModal() {
     const resp = await fetch(`${API}/api/create-subscription`, {
       method: "POST",
       headers: await authHeaders(),
+      body: JSON.stringify({ plan: _selectedPlan }),
     });
     if (resp.status === 409) {
       // Already subscribed — just refresh local state and proceed.
@@ -5782,6 +5859,7 @@ async function openUpgradeModal() {
   } catch (err) {
     console.error("create-subscription failed:", err);
     upgradeMsg("Couldn't start checkout: " + (err.message || err) + ". Please try again.", "error");
+    document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = false));
     return;
   }
 
@@ -5789,10 +5867,15 @@ async function openUpgradeModal() {
     _upgradeElements = _stripe.elements({ clientSecret, appearance: { theme: "night" } });
     const paymentEl = _upgradeElements.create("payment");
     paymentEl.mount("#upgrade-payment-element");
-    paymentEl.on("ready", () => { clearUpgradeMsg(); subscribeBtn.disabled = false; });
+    paymentEl.on("ready", () => {
+      clearUpgradeMsg();
+      subscribeBtn.disabled = false;
+      document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = false));
+    });
   } catch (err) {
     console.error("Elements mount failed:", err);
     upgradeMsg("Couldn't load the payment form. Please try again.", "error");
+    document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = false));
   }
 }
 
@@ -6018,6 +6101,7 @@ function clearShareParam() {
 function clearCheckoutParam() {
   const url = new URL(window.location.href);
   url.searchParams.delete("checkout");
+  url.searchParams.delete("plan");
   window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
 }
 
@@ -7612,6 +7696,7 @@ function showResults(msg) {
 
     const dashState = {
       filter: { p1: true, p2: true },
+      showEgg: false,
       scope: 'match',
       currentPointNum: null,   // 1-based, set when a point becomes "current"
       currentPointData: null,  // cached rally for current point (null until loaded)
@@ -7674,6 +7759,20 @@ function showResults(msg) {
     const wX = m => (m / 6.4) * 640;
     const wY = m => 457 - (m / 4.57) * 457; // floor at bottom
 
+    // Singles "egg" zone. Ellipse whose half-width grows linearly from 1.55m (front tip,
+    // 3.10m from front wall) to 1.77m (back, 7.77m), centered on the 3.2m half-court line.
+    // Fit: (x/(1.661+0.0481u))^2 + (u/2.333)^2 = 1, u = y - 5.428, x from centerline (meters).
+    function eggPathSvg() {
+      const uMax = 2.333, cy0 = 5.428, halfCourt = 3.2, N = 64;
+      const half = u => 1.661 + 0.0481 * u;
+      const dx = u => half(u) * Math.sqrt(Math.max(0, 1 - (u / uMax) ** 2));
+      const pts = [];
+      for (let i = 0; i <= N; i++) { const u = -uMax + (2 * uMax) * (i / N); pts.push([cX(halfCourt + dx(u)), cY(cy0 + u)]); }
+      for (let i = N; i >= 0; i--) { const u = -uMax + (2 * uMax) * (i / N); pts.push([cX(halfCourt - dx(u)), cY(cy0 + u)]); }
+      const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z';
+      return `<path class="dash-egg" d="${d}"/>`;
+    }
+
     function courtShellSvg(innerHtml) {
       return `
         <svg viewBox="0 0 640 975" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
@@ -7707,7 +7806,7 @@ function showResults(msg) {
       if (!host) return;
       const pt = dashState.currentPointData;
       const tInPoint = Math.max(0, pvVideo.currentTime - (dashState.currentPointStart || 0));
-      if (!pt) { host.innerHTML = courtShellSvg(''); return; }
+      if (!pt) { host.innerHTML = courtShellSvg(dashState.showEgg ? eggPathSvg() : ''); return; }
 
       const SAMPLE_HZ = 5;
       const HEAT_STRIDE = 2;
@@ -7766,7 +7865,8 @@ function showResults(msg) {
                 <circle class="${headCls}" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="12"/>`;
       }
 
-      const inner = blobsFor('player_1', 'dash-heat-p1')
+      const inner = (dashState.showEgg ? eggPathSvg() : '')
+                  + blobsFor('player_1', 'dash-heat-p1')
                   + blobsFor('player_2', 'dash-heat-p2')
                   + trailFor('player_1', 'dash-trail-p1', 'dash-head-p1')
                   + trailFor('player_2', 'dash-trail-p2', 'dash-head-p2');
@@ -8047,6 +8147,8 @@ function showResults(msg) {
       };
       document.querySelectorAll('.dash-filter-p1').forEach(cb => cb.addEventListener('change', e => sync('p1', e.target.checked)));
       document.querySelectorAll('.dash-filter-p2').forEach(cb => cb.addEventListener('change', e => sync('p2', e.target.checked)));
+      const eggCb = document.getElementById('dash-filter-egg');
+      if (eggCb) eggCb.addEventListener('change', e => { dashState.showEgg = e.target.checked; renderDashHeatmap(); });
     }
     function setupDashStatsToggle() {
       document.querySelectorAll('#dash-stats-toggle button').forEach(b => {
