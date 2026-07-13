@@ -886,11 +886,52 @@
     color: var(--text-dim);
   }
   
+  /* Three-phase stepper above the bar */
+  .phase-steps {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .phase-step {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    opacity: .45;
+    transition: opacity .3s, color .3s;
+  }
+  .phase-step .phase-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--surface-hover);
+    flex-shrink: 0;
+    transition: background .3s, box-shadow .3s;
+  }
+  .phase-step.done { opacity: .85; color: var(--text); }
+  .phase-step.done .phase-dot { background: var(--accent); }
+  .phase-step.active { opacity: 1; color: var(--text); }
+  .phase-step.active .phase-dot { background: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+
   .overall-bar-bg {
+    position: relative;
     height: 12px;
     background: var(--surface-hover);
     border-radius: 6px;
     overflow: hidden;
+  }
+  .bar-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--surface);
+    opacity: .6;
+    z-index: 2;
   }
   
   .overall-bar-fill {
@@ -4246,7 +4287,12 @@
         <div class="overall-pct" id="overall-pct">0%</div>
         <div class="overall-eta" id="overall-eta"></div>
       </div>
-      <div class="overall-bar-bg"><div class="overall-bar-fill" id="overall-fill"></div></div>
+      <div class="phase-steps" id="phase-steps">
+        <div class="phase-step active" data-phase="0"><span class="phase-dot"></span><span class="phase-name">Uploading Video</span></div>
+        <div class="phase-step" data-phase="1"><span class="phase-dot"></span><span class="phase-name">Tracking in Progress</span></div>
+        <div class="phase-step" data-phase="2"><span class="phase-dot"></span><span class="phase-name">Calculating Stats</span></div>
+      </div>
+      <div class="overall-bar-bg"><div class="overall-bar-fill" id="overall-fill"></div><span class="bar-tick" style="left:33.333%"></span><span class="bar-tick" style="left:66.666%"></span></div>
       <div class="overall-status" id="overall-status">Starting...</div>
     </div>
     <div id="reprompt-section" style="display:none;">
@@ -4841,6 +4887,7 @@ btnBackToVideos.addEventListener("click", () => {
     try { ws.close(); } catch (e) {} ws = null;
   }
   stopProcessingPreview();
+  stopPhaseCreep();
   goToMyVideos();
 });
 
@@ -5359,6 +5406,7 @@ async function openProcessingPreview(key, data) {
 
   const status0 = data.status || "processing";
   const initialPct = typeof data.progress === "number" ? data.progress : 0;
+  updatePhaseStepsUI(phaseFromPct(initialPct));
   updateOverallProgress(initialPct, data.statusMessage || (status0 === "uploading" ? "Uploading video…" : "Processing video…"));
   document.getElementById("overall-eta").textContent = "";
   document.getElementById("reprompt-section").style.display = "none";
@@ -5395,6 +5443,7 @@ async function openProcessingPreview(key, data) {
       return;
     }
     const pct = typeof d.progress === "number" ? d.progress : initialPct;
+    updatePhaseStepsUI(phaseFromPct(pct));
     updateOverallProgress(pct, d.statusMessage || (status === "uploading" ? "Uploading video…" : "Processing video…"));
   }, (err) => console.warn("Processing preview snapshot error:", err));
 }
@@ -6291,7 +6340,7 @@ function updateOverallProgress(pct, statusText) {
   document.getElementById("overall-fill").style.width = pct + "%";
   if (statusText) document.getElementById("overall-status").textContent = statusText;
   const elapsed = (Date.now() - processingStartTime) / 1000;
-  if (processingStartTime > 0 && pct > 2 && elapsed > 10) { const remaining = (elapsed / (pct / 100)) - elapsed; const m = Math.floor(remaining / 60), s = Math.floor(remaining % 60); document.getElementById("overall-eta").textContent = remaining > 5 ? `~${m}m ${s}s remaining` : "Almost done..."; }
+  if (processingStartTime > 0 && _phaseIdx === 1 && pct > 2 && elapsed > 10) { const remaining = (elapsed / (pct / 100)) - elapsed; const m = Math.floor(remaining / 60), s = Math.floor(remaining % 60); document.getElementById("overall-eta").textContent = remaining > 5 ? `~${m}m ${s}s remaining` : "Almost done..."; }
   // Persist progress so shared viewers / other tabs see a live status bar (throttled).
   if (activeProcessingKey && activeProcessingKey === videoKey) {
     const now = Date.now();
@@ -6302,6 +6351,87 @@ function updateOverallProgress(pct, statusText) {
       updateDoc(doc(fbFirestore, "videos", videoKey), update).catch(() => {});
     }
   }
+}
+
+// ---- Three-phase processing progress -------------------------------------
+// Phase 0 "Uploading Video" (upload + server prepare), phase 1 "Tracking in
+// Progress" (SAM2 tracking, real progress), phase 2 "Calculating Stats"
+// (rendering + point segmentation). Each phase owns one third of the bar.
+const TRACK_PHASES = ["Uploading Video", "Tracking in Progress", "Calculating Stats"];
+let _phaseIdx = 0;
+let _phaseSubText = "";
+let _trackingStarted = false;
+let _phaseCreepTimer = null;
+
+function phaseFromPct(pct) {
+  return Math.max(0, Math.min(TRACK_PHASES.length - 1, Math.floor(pct / (100 / TRACK_PHASES.length))));
+}
+function updatePhaseStepsUI(idx) {
+  document.querySelectorAll("#phase-steps .phase-step").forEach((el) => {
+    const p = Number(el.dataset.phase);
+    el.classList.toggle("active", p === idx);
+    el.classList.toggle("done", p < idx);
+  });
+}
+// Map a phase (0..2) + fraction within that phase to the overall 0-100 bar.
+function setPhaseProgress(phaseIdx, fracWithinPhase, subText) {
+  _phaseIdx = phaseIdx;
+  if (subText != null) _phaseSubText = subText;
+  const frac = Math.max(0, Math.min(1, fracWithinPhase || 0));
+  const overall = (phaseIdx + frac) / TRACK_PHASES.length * 100;
+  updatePhaseStepsUI(phaseIdx);
+  // ETA only makes sense during the measurable tracking phase.
+  if (phaseIdx !== 1) document.getElementById("overall-eta").textContent = "";
+  updateOverallProgress(overall, _phaseSubText || TRACK_PHASES[phaseIdx]);
+}
+function setPhaseSubText(text) {
+  if (!text) return;
+  _phaseSubText = text;
+  document.getElementById("overall-status").textContent = text;
+}
+// Reset the stepper for a fresh run (called when the process screen opens).
+function resetPhases() {
+  _phaseIdx = 0; _phaseSubText = ""; _trackingStarted = false;
+  stopPhaseCreep();
+  updatePhaseStepsUI(0);
+}
+// For phases without granular server progress (upload/prepare, stats calc):
+// ease the bar asymptotically toward `capFrac` so it reads as "working".
+function startPhaseCreep(phaseIdx, fromFrac, capFrac, subText) {
+  stopPhaseCreep();
+  let frac = fromFrac;
+  setPhaseProgress(phaseIdx, frac, subText);
+  _phaseCreepTimer = setInterval(() => {
+    frac += (capFrac - frac) * 0.08;
+    if (frac > capFrac - 0.005) frac = capFrac;
+    setPhaseProgress(phaseIdx, frac);
+  }, 700);
+}
+function stopPhaseCreep() {
+  if (_phaseCreepTimer) { clearInterval(_phaseCreepTimer); _phaseCreepTimer = null; }
+}
+// Fraction (0..1) through the tracking phase, from source frames tracked.
+function trackingFrac() {
+  return Math.max(0, Math.min(1, completedSrcFrames / Math.max(totalSrcFrames, 1)));
+}
+// Phase 2: after tracking completes, poll until derived stats exist, then show
+// results. Keeps the process screen up (with a live bar) during rendering +
+// point segmentation instead of dropping the user into an empty results view.
+async function waitForStatsThenShow(msg, tries = 90, delayMs = 4000) {
+  const key = videoKey;
+  startPhaseCreep(2, 0.05, 0.93, "Rendering clips & calculating stats…");
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(`${API}/api/points/${key}`, { method: "GET" });
+      if (r.ok) break;
+    } catch (_) {}
+    if (videoKey !== key) return; // user navigated away
+    await new Promise((res) => setTimeout(res, delayMs));
+  }
+  if (videoKey !== key) return;
+  stopPhaseCreep();
+  setPhaseProgress(2, 1, "Done!");
+  showResults(msg);
 }
 const uploadZone = document.getElementById("upload-zone");
 const fileInput = document.getElementById("file-input");
@@ -7315,7 +7445,8 @@ async function spawnGameJobs() {
     totalSrcFrames = gameSegments[0].endFrame - gameSegments[0].startFrame;
     completedSrcFrames = 0;
     document.getElementById("preview-video").src = videoBlobUrl;
-    updateOverallProgress(0, "Starting…");
+    resetPhases();
+    startPhaseCreep(0, 0.05, 0.9, "Uploading & preparing your video…");
   }
 
   // Spawn all games concurrently. Each game: create doc → get job_id →
@@ -7528,12 +7659,13 @@ async function startProcessing() {
   showStep("process"); processingStartTime = Date.now(); totalSrcFrames = videoMeta.total_frames; completedSrcFrames = 0;
   document.getElementById("preview-video").src = videoBlobUrl;
   activeProcessingKey = videoKey; lastProgressPersist = 0;
+  resetPhases();
   updateVideoStatus(videoKey, "processing");
 
   // Block until the source video upload finishes — prepare was already kicked off
   // in the background as part of the upload promise, so we wait on it after.
   if (uploadPromise) {
-    updateOverallProgress(0, "Finishing upload...");
+    setPhaseProgress(0, 0.1, "Finishing upload…");
     try {
       await uploadPromise;
     } catch (err) {
@@ -7543,7 +7675,7 @@ async function startProcessing() {
     }
   }
   if (preparePromise) {
-    updateOverallProgress(0, "Preparing video on server...");
+    setPhaseProgress(0, 0.5, "Preparing video on server…");
     try {
       await preparePromise;
     } catch (err) {
@@ -7554,22 +7686,53 @@ async function startProcessing() {
   }
   totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
 
-  updateOverallProgress(0, "Connecting...");
+  setPhaseProgress(0, 0.8, "Connecting…");
   const wsUrl = `${API.replace("http", "ws")}/ws/${jobId}`; ws = new WebSocket(wsUrl);
-  ws.onopen = () => { updateOverallProgress(0, "Connected. Starting tracking..."); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: videoKey })); };
+  ws.onopen = () => { setPhaseProgress(0, 0.9, "Connected. Starting tracking…"); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: videoKey })); };
   ws.onmessage = (e) => handleWsMessage(JSON.parse(e.data));
   ws.onerror = () => updateOverallProgress(completedSrcFrames / totalSrcFrames * 100, "Connection error...");
   ws.onclose = () => {};
 }
 function handleWsMessage(msg) {
   switch (msg.type) {
-    case "status": updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, msg.message); break;
-    case "progress": if (msg.pct !== undefined) { currentSegPct = msg.pct / 100; const overall = (completedSrcFrames + currentSegSrcFrames * currentSegPct) / Math.max(totalSrcFrames, 1) * 100; updateOverallProgress(overall, "Tracking players..."); } break;
-    case "segment_start": currentSegSrcStart = msg.src_start; currentSegSrcFrames = msg.src_frames; currentSegPct = 0; updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, "Tracking players..."); break;
-    case "segment_complete": completedSrcFrames = currentSegSrcStart + currentSegSrcFrames; updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, "Tracking players..."); break;
+    case "status":
+      // Before any frames are tracked, status lines describe the upload/prepare
+      // phase; once tracking is underway they annotate the tracking phase.
+      if (_trackingStarted) setPhaseProgress(1, trackingFrac(), msg.message || "Tracking players…");
+      else setPhaseSubText(msg.message);
+      break;
+    case "progress":
+      if (msg.pct !== undefined) {
+        _trackingStarted = true; stopPhaseCreep();
+        currentSegPct = msg.pct / 100;
+        const frac = (completedSrcFrames + currentSegSrcFrames * currentSegPct) / Math.max(totalSrcFrames, 1);
+        setPhaseProgress(1, frac, "Tracking players…");
+      }
+      break;
+    case "segment_start":
+      _trackingStarted = true; stopPhaseCreep();
+      currentSegSrcStart = msg.src_start; currentSegSrcFrames = msg.src_frames; currentSegPct = 0;
+      setPhaseProgress(1, trackingFrac(), "Tracking players…");
+      break;
+    case "segment_complete":
+      _trackingStarted = true; stopPhaseCreep();
+      completedSrcFrames = currentSegSrcStart + currentSegSrcFrames;
+      setPhaseProgress(1, trackingFrac(), "Tracking players…");
+      break;
     case "needs_reprompt": showReprompt(msg); break;
-    case "complete": activeProcessingKey = null; updateOverallProgress(100, "Complete!"); document.getElementById("overall-eta").textContent = ""; updateVideoStatus(videoKey, "complete"); showResults(msg); break;
-    case "error": activeProcessingKey = null; updateOverallProgress(completedSrcFrames / Math.max(totalSrcFrames, 1) * 100, `Error: ${msg.message}`); updateVideoStatus(videoKey, "failed"); break;
+    case "complete":
+      // Tracking done → enter phase 2 (Calculating Stats) and wait for the
+      // derived stats to render before switching to the results view.
+      activeProcessingKey = null;
+      setPhaseProgress(1, 1, "Tracking players…");
+      updateVideoStatus(videoKey, "complete");
+      waitForStatsThenShow(msg);
+      break;
+    case "error":
+      activeProcessingKey = null; stopPhaseCreep();
+      updateOverallProgress((_phaseIdx + trackingFrac()) / TRACK_PHASES.length * 100, `Error: ${msg.message}`);
+      updateVideoStatus(videoKey, "failed");
+      break;
   }
 }
 function showReprompt(msg) {
