@@ -3504,6 +3504,23 @@
     white-space: nowrap; flex-shrink: 0;
   }
   .dash-stat-value-big { font-size: 22px; font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--text); }
+  .dash-stats-stack { display: flex; flex-direction: column; gap: 12px; }
+  .dash-stat-card-blank { border-style: dashed; background: transparent; opacity: 0.4; }
+  .dash-egg-card { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .dash-egg-title {
+    font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--text);
+    font-size: 22px; line-height: 1.05;
+  }
+  .dash-egg-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin-left: auto; }
+  .dash-egg-name {
+    display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 13px;
+  }
+  .dash-egg-big {
+    font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--text);
+    font-size: 28px; line-height: 1; display: inline-flex; align-items: flex-end; gap: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dash-egg-denom { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-bottom: 4px; }
 
   .dash-loading {
     color: var(--text-dim); font-size: 13px;
@@ -3688,6 +3705,9 @@
   window.__WANT_CHECKOUT__ = __params.has('checkout');
   // Optional billing period preselected from the landing page (monthly|annual).
   window.__CHECKOUT_PLAN__ = __params.get('plan') || null;
+  // Per-video deep link: each video is its own page at /?video=<key>. When set,
+  // we boot straight into that video (fresh page = isolated state).
+  window.__OPEN_VIDEO_KEY__ = __params.get('video') || null;
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
   // Direct public download URL for the demo source video. Uses the Firebase Storage
   // download-token endpoint, which is a public capability URL: it bypasses the Storage
@@ -4418,7 +4438,7 @@
     </div>
 
     <div class="btn-row" style="margin-top: 28px;">
-      <button class="btn btn-secondary" onclick="location.reload()">Track Another Video</button>
+      <button class="btn btn-secondary" onclick="location.href='/'">Track Another Video</button>
     </div>
   </div>
 </div>
@@ -4812,6 +4832,23 @@ onAuthStateChanged(fbAuth, async (user) => {
       if (!hasActiveSub()) openUpgradeModal(window.__CHECKOUT_PLAN__);
       return;
     }
+
+    // Per-video deep link (/?video=<key>): boot straight into that video. A
+    // fresh page load means fully isolated state — no bleed between videos.
+    if (window.__OPEN_VIDEO_KEY__) {
+      const vkey = window.__OPEN_VIDEO_KEY__;
+      try {
+        const snap = await getDoc(doc(fbFirestore, "videos", vkey));
+        if (snap.exists()) {
+          await openVideo(vkey, snap.data());
+          return;
+        }
+        console.warn("?video= doc not found or no access:", vkey);
+      } catch (err) {
+        console.warn("Open ?video= failed:", err);
+      }
+      // Fall through to the library if the video can't be opened.
+    }
     goToMyVideos();
   } else {
     console.log("[DEBUG] Signed out");
@@ -4888,6 +4925,7 @@ btnBackToVideos.addEventListener("click", () => {
   }
   stopProcessingPreview();
   stopPhaseCreep();
+  clearVideoParam();   // drop /?video=<key> so the URL reflects the library
   goToMyVideos();
 });
 
@@ -5129,8 +5167,11 @@ async function renderMatchGroupCard(parentKey, games) {
     row.appendChild(arrow);
     row.addEventListener("click", (e) => {
       e.stopPropagation();
-      openVideo(g.id, g.data);
+      goToVideoPage(g.id);
     });
+    if ((g.data.status || "").toLowerCase() === "complete") {
+      row.addEventListener("mouseenter", () => prefetchStats(g.id), { once: true });
+    }
     list.appendChild(row);
   });
 
@@ -5341,7 +5382,11 @@ async function renderVideoCard(videoKeyId, data) {
   body.appendChild(metaEl);
   card.appendChild(thumb);
   card.appendChild(body);
-  card.addEventListener("click", () => openVideo(videoKeyId, data));
+  card.addEventListener("click", () => goToVideoPage(videoKeyId));
+  // Warm the stats cache on hover so opening the video's page is near-instant.
+  if ((data.status || "").toLowerCase() === "complete") {
+    card.addEventListener("mouseenter", () => prefetchStats(videoKeyId), { once: true });
+  }
   return card;
 }
 
@@ -6154,6 +6199,18 @@ function clearCheckoutParam() {
   window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
 }
 
+// ---- Per-video page URL (/?video=<key>) ----
+function buildVideoUrl(key) {
+  return `${window.location.origin}/?video=${encodeURIComponent(key)}`;
+}
+function clearVideoParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("video");
+  window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
+}
+// Navigate to a video's dedicated page (real page load = isolated state).
+function goToVideoPage(key) { window.location.href = buildVideoUrl(key); }
+
 // ---- Incoming player-invite link: bind the recipient to a player slot on a video ----
 function getPendingInvite() {
   const params = new URLSearchParams(window.location.search);
@@ -6333,6 +6390,129 @@ async function uploadThumbnail(key, sourceCanvas) {
     }, "image/jpeg", 0.85);
   });
 }
+// ---- Persistent stats cache (localStorage, per video) --------------------
+// Makes reopening a video instant and lets the initial load fetch all point
+// rallies in parallel instead of one-at-a-time. Stale-while-revalidate: cached
+// data paints immediately, then index + point list refresh in the background;
+// if the point count changed (video was re-processed) the rally cache is
+// dropped so stale rallies can't linger.
+const STATS_CACHE_PREFIX = "boastiq_stats_";
+const STATS_CACHE_VERSION = 1;
+const _inflightPrefetch = new Set();
+
+function _statsCacheKey(key) { return STATS_CACHE_PREFIX + key; }
+function readStatsCache(key) {
+  try {
+    const raw = localStorage.getItem(_statsCacheKey(key));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || obj.v !== STATS_CACHE_VERSION) return null;
+    if (!obj.rallies) obj.rallies = {};
+    return obj;
+  } catch (_) { return null; }
+}
+// Evict the oldest cached videos (by fetchedAt) to free localStorage space.
+function _evictOldStatsCaches(exceptKey) {
+  try {
+    const entries = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(STATS_CACHE_PREFIX) || k === _statsCacheKey(exceptKey)) continue;
+      let ts = 0; try { ts = (JSON.parse(localStorage.getItem(k)) || {}).fetchedAt || 0; } catch (_) {}
+      entries.push([k, ts]);
+    }
+    entries.sort((a, b) => a[1] - b[1]);              // oldest first
+    entries.slice(0, Math.ceil(entries.length / 2)).forEach(([k]) => localStorage.removeItem(k));
+    return entries.length > 0;
+  } catch (_) { return false; }
+}
+function writeStatsCache(key, patch) {
+  const cur = readStatsCache(key) || { v: STATS_CACHE_VERSION, rallies: {} };
+  const next = { ...cur, ...patch, v: STATS_CACHE_VERSION };
+  next.rallies = { ...(cur.rallies || {}), ...(patch.rallies || {}) };
+  try {
+    localStorage.setItem(_statsCacheKey(key), JSON.stringify(next));
+  } catch (e) {
+    // Quota exceeded — evict other videos' caches, then retry once.
+    if (_evictOldStatsCaches(key)) {
+      try { localStorage.setItem(_statsCacheKey(key), JSON.stringify(next)); return; } catch (_) {}
+    }
+    // Still failing — persist the small bits (index/pointStarts) without rallies.
+    try {
+      const slim = { ...next, rallies: {} };
+      localStorage.setItem(_statsCacheKey(key), JSON.stringify(slim));
+    } catch (_) {}
+  }
+}
+function getCachedRally(key, n) { const c = readStatsCache(key); return c ? c.rallies[n] : undefined; }
+function getCachedIndex(key) { const c = readStatsCache(key); return c ? c.index : undefined; }
+function getCachedPointStarts(key) { const c = readStatsCache(key); return c ? c.pointStarts : undefined; }
+
+// Fetch index + point_starts concurrently, persist, and drop stale rallies if
+// the point count changed. Returns { index, pointStarts }.
+async function loadStatsFor(key) {
+  const [idxRes, psRes] = await Promise.allSettled([
+    fetch(`${API}/api/points/${key}/index`),
+    fetch(`${API}/api/points/${key}`),
+  ]);
+  let index, pointStarts;
+  try { if (idxRes.status === "fulfilled" && idxRes.value.ok) index = await idxRes.value.json(); } catch (_) {}
+  try {
+    if (psRes.status === "fulfilled" && psRes.value.ok) {
+      const d = await psRes.value.json();
+      pointStarts = Array.isArray(d) ? d : (d.point_starts || d.points || []);
+    }
+  } catch (_) {}
+  const patch = {};
+  if (index) patch.index = index;
+  if (pointStarts) patch.pointStarts = pointStarts;
+  if (Object.keys(patch).length) {
+    // Invalidate cached rallies if the point count no longer matches.
+    const prev = readStatsCache(key);
+    const newCount = (index && index.total_points) || (pointStarts && pointStarts.length);
+    const oldCount = prev && ((prev.index && prev.index.total_points) || (prev.pointStarts && prev.pointStarts.length));
+    if (prev && newCount != null && oldCount != null && newCount !== oldCount) {
+      try { localStorage.removeItem(_statsCacheKey(key)); } catch (_) {}
+    }
+    patch.fetchedAt = Date.now();
+    writeStatsCache(key, patch);
+  }
+  return { index, pointStarts };
+}
+
+// Parallel-fetch every point rally (cache-first), persist, return { n: data }.
+async function bulkLoadRallies(key, totalPoints, opts = {}) {
+  const concurrency = opts.concurrency || 8;
+  const cache = readStatsCache(key);
+  const out = (cache && cache.rallies) ? { ...cache.rallies } : {};
+  const missing = [];
+  for (let i = 1; i <= totalPoints; i++) if (out[i] == null) missing.push(i);
+  for (let b = 0; b < missing.length; b += concurrency) {
+    const batch = missing.slice(b, b + concurrency);
+    const results = await Promise.all(batch.map(async (i) => {
+      try { const r = await fetch(`${API}/api/points/${key}/${i}`); if (r.ok) return [i, await r.json()]; } catch (_) {}
+      return null;
+    }));
+    const patch = {};
+    results.forEach((res) => { if (res) { out[res[0]] = res[1]; patch[res[0]] = res[1]; } });
+    if (Object.keys(patch).length) writeStatsCache(key, { rallies: patch });
+  }
+  return out;
+}
+
+// Best-effort background prefetch for a completed video (used from the library).
+function prefetchStats(key) {
+  if (!key || _inflightPrefetch.has(key)) return;
+  _inflightPrefetch.add(key);
+  (async () => {
+    try {
+      const { index } = await loadStatsFor(key);
+      const total = (index && index.total_points) || 0;
+      if (total) await bulkLoadRallies(key, total, { concurrency: 6 });
+    } catch (_) {} finally { _inflightPrefetch.delete(key); }
+  })();
+}
+
 let activeProcessingKey = null, lastProgressPersist = 0;
 function updateOverallProgress(pct, statusText) {
   pct = Math.min(100, Math.max(0, pct));
@@ -7778,63 +7958,61 @@ function showResults(msg) {
     console.log("Video key:", videoKey);
     console.log("Points URL:", pointsUrl);
     
-    // Function to fetch and load points
+    // Normalize a point_starts payload into `points` and paint the list.
+    function applyPoints(data) {
+      if (Array.isArray(data)) points = data;
+      else if (data && data.point_starts && Array.isArray(data.point_starts)) points = data.point_starts;
+      else if (data && data.points && Array.isArray(data.points)) points = data.points;
+      else points = [];
+      document.getElementById("pv-points-count").textContent = points.length + " points";
+      renderPointsList();
+      updateButtons();
+      const ptTotEl = document.getElementById('dash-point-total');
+      if (ptTotEl) ptTotEl.textContent = points.length;
+      if (points.length > 0 && dashState.currentPointNum == null) {
+        setCurrentPoint(0);
+      }
+    }
+
+    // Function to fetch and load points (cache-first, then revalidate)
     async function loadPoints(retries = 30, delay = 5000) {
       if (!videoKey) {
         console.warn("No video_key available");
         document.getElementById("pv-points-count").textContent = "No video key";
         return;
       }
-      
-      console.log("Fetching points from:", pointsUrl);
-      
+
+      // Stale-while-revalidate: paint cached points instantly, then refresh.
+      const cachedPS = getCachedPointStarts(videoKey);
+      const hadCache = !!(cachedPS && cachedPS.length);
+      if (hadCache) applyPoints(cachedPS);
+
       for (let i = 0; i < retries; i++) {
         try {
-          document.getElementById("pv-points-count").textContent = `Loading... (${i + 1}/${retries})`;
+          if (!hadCache) document.getElementById("pv-points-count").textContent = `Loading... (${i + 1}/${retries})`;
           const r = await fetch(pointsUrl);
-          console.log(`Attempt ${i + 1}: Response status ${r.status}`);
-          
-          if (r.status === 404 || r.status === 403) {
-            // File not ready yet, wait and retry
+          if (r.status === 404 || r.status === 403 || !r.ok) {
+            if (hadCache) return; // keep cached view; nothing new to show
             await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
-          if (!r.ok) {
-            console.log(`HTTP error ${r.status}`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
-          
           const data = await r.json();
-          console.log("Points data received:", data);
-          
-          // Handle various JSON formats
-          if (Array.isArray(data)) {
-            points = data;
-          } else if (data.point_starts && Array.isArray(data.point_starts)) {
-            points = data.point_starts;
-          } else if (data.points && Array.isArray(data.points)) {
-            points = data.points;
-          } else {
-            console.error("Unexpected data format:", data);
-            points = [];
-          }
-          
-          document.getElementById("pv-points-count").textContent = points.length + " points";
-          renderPointsList();
-          updateButtons();
-          const ptTotEl = document.getElementById('dash-point-total');
-          if (ptTotEl) ptTotEl.textContent = points.length;
-          if (points.length > 0 && dashState.currentPointNum == null) {
-            setCurrentPoint(0);
-          }
+          const before = points.length;
+          applyPoints(data);
+          // Persist for instant reopen; drop stale rally cache if the count changed.
+          try {
+            if (hadCache && before && before !== points.length) {
+              try { localStorage.removeItem(_statsCacheKey(videoKey)); } catch (_) {}
+            }
+            writeStatsCache(videoKey, { pointStarts: points, fetchedAt: Date.now() });
+          } catch (_) {}
           return; // Success!
-          
         } catch (e) {
-          console.log(`Fetch error on attempt ${i + 1}:`, e);
+          if (hadCache) return;
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
+      if (hadCache) return; // cached view stands even if revalidation failed
       
       // All retries failed - show manual retry option with debug link
       console.error("Failed to load points after all retries. URL:", pointsUrl);
@@ -7934,6 +8112,38 @@ function showResults(msg) {
       for (let i = N; i >= 0; i--) { const u = -uMax + (2 * uMax) * (i / N); pts.push([cX(halfCourt - dx(u)), cY(cy0 + u)]); }
       const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z';
       return `<path class="dash-egg" d="${d}"/>`;
+    }
+
+    // True when a court position (meters: x from left wall 0-6.4, y from front wall 0-9.75)
+    // lies inside the singles egg. Same fit as eggPathSvg, solved as an inequality.
+    function inEgg(x, y) {
+      if (x == null || y == null) return false;
+      const u = y - 5.428;
+      if (Math.abs(u) > 2.333) return false;
+      const a = 1.661 + 0.0481 * u;
+      const xc = x - 3.2;
+      return (xc / a) ** 2 + (u / 2.333) ** 2 <= 1;
+    }
+
+    // Count movement samples inside vs total for a player. Samples are uniform 5Hz,
+    // so inside/total is the fraction of point time spent in the egg.
+    function eggCounts(pt, player) {
+      const m = pt && pt.movement && pt.movement[player];
+      if (!m || !Array.isArray(m.x) || !Array.isArray(m.y)) return { inside: 0, total: 0 };
+      const n = Math.min(m.x.length, m.y.length);
+      let inside = 0, total = 0;
+      for (let i = 0; i < n; i++) {
+        const x = m.x[i], y = m.y[i];
+        if (x == null || y == null) continue;
+        total++;
+        if (inEgg(x, y)) inside++;
+      }
+      return { inside, total };
+    }
+
+    // Egg-time score = fraction of time in the egg × 100 (0-100), or '–' with no track.
+    function eggScore(inside, total) {
+      return total ? Math.round((inside / total) * 100) : '–';
     }
 
     function courtShellSvg(innerHtml) {
@@ -8105,12 +8315,14 @@ function showResults(msg) {
       };
       const classOf = (player, cls) =>
         rally.filter(s => s.hit_by === player && s.shot_class === cls).length;
+      const eggOf = (player) => { const c = eggCounts(pt, player); return eggScore(c.inside, c.total); };
       return {
         duration: `${(pt.duration_sec || 0).toFixed(1)} s`,
         totalShots: rally.length,
         avgRally: `${(pt.duration_sec || 0).toFixed(1)} s`,
         distP1: `${dist('player_1').toFixed(1)} m`,
         distP2: `${dist('player_2').toFixed(1)} m`,
+        eggTime: { p1: eggOf('player_1'), p2: eggOf('player_2') },
         drives:  { p1: classOf('player_1', 'drive'),  p2: classOf('player_2', 'drive') },
         drops:   { p1: classOf('player_1', 'drop'),   p2: classOf('player_2', 'drop') },
         boasts:  { p1: classOf('player_1', 'boast'),  p2: classOf('player_2', 'boast') },
@@ -8163,23 +8375,49 @@ function showResults(msg) {
           <div class="dash-stat-row"><span class="dash-stat-name"><span class="dash-dot dash-dot-p2"></span>${dashState.p2Name}</span><span class="dash-stat-value">${b}</span></div>
         </div>`;
       const one = v => `<div class="dash-stat-value-big">${v}</div>`;
-      body.innerHTML = `<div class="dash-stats-grid">${[
-        card('Duration', one(s.duration)),
-        card('Total shots', one(s.totalShots)),
-        card('Avg rally', one(s.avgRally || s.duration)),
-        card('Distance', dual(s.distP1, s.distP2)),
-        card('Drives', dual(s.drives.p1, s.drives.p2)),
-        card('Drops', dual(s.drops.p1, s.drops.p2)),
-        card('Boasts', dual(s.boasts.p1, s.boasts.p2)),
-        card('Volleys', dual(s.volleys.p1, s.volleys.p2)),
-      ].join('')}</div>`;
+      const blank = () => `<div class="dash-stat-card dash-stat-card-blank"></div>`;
+      const egg = s.eggTime || { p1: '–', p2: '–' };
+      const eggBox = (pc, name, v) => `
+        <div class="dash-stat-card dash-egg-card">
+          <div class="dash-egg-title">Egg<br>Time</div>
+          <div class="dash-egg-right">
+            <div class="dash-egg-name"><span class="dash-dot dash-dot-${pc}"></span>${name}</div>
+            <div class="dash-egg-big">${v}<span class="dash-egg-denom">/100</span></div>
+          </div>
+        </div>`;
+      body.innerHTML = `
+        <div class="dash-stats-stack">
+          <div class="dash-stats-grid">
+            ${card('Duration', one(s.duration))}
+            ${card('Total shots', one(s.totalShots))}
+            ${card('Avg rally', one(s.avgRally || s.duration))}
+            ${card('Distance', dual(s.distP1, s.distP2))}
+          </div>
+          <div class="dash-stats-grid">
+            ${eggBox('p1', dashState.p1Name, egg.p1)}
+            ${eggBox('p2', dashState.p2Name, egg.p2)}
+            ${blank()}
+            ${blank()}
+          </div>
+          <div class="dash-stats-grid">
+            ${card('Drives', dual(s.drives.p1, s.drives.p2))}
+            ${card('Drops', dual(s.drops.p1, s.drops.p2))}
+            ${card('Boasts', dual(s.boasts.p1, s.boasts.p2))}
+            ${card('Volleys', dual(s.volleys.p1, s.volleys.p2))}
+          </div>
+        </div>`;
     }
 
     async function loadMatchAggregates() {
       try {
-        const indexResp = await fetch(`${API}/api/points/${videoKey}/index`);
-        if (!indexResp.ok) { await new Promise(r => setTimeout(r, 5000)); return loadMatchAggregates(); }
-        const indexData = await indexResp.json();
+        // Cache-first for the index (player names + point count); revalidate lazily.
+        let indexData = getCachedIndex(videoKey);
+        if (!indexData) {
+          const indexResp = await fetch(`${API}/api/points/${videoKey}/index`);
+          if (!indexResp.ok) { await new Promise(r => setTimeout(r, 5000)); return loadMatchAggregates(); }
+          indexData = await indexResp.json();
+          writeStatsCache(videoKey, { index: indexData });
+        }
         const totalPoints = indexData.total_points || 0;
         document.getElementById('dash-point-total').textContent = totalPoints || '–';
         if (totalPoints === 0) return;
@@ -8189,16 +8427,11 @@ function showResults(msg) {
         document.querySelectorAll('.dash-fname-p1').forEach(el => { el.textContent = dashState.p1Name; });
         document.querySelectorAll('.dash-fname-p2').forEach(el => { el.textContent = dashState.p2Name; });
 
+        // Parallel + cache-first (was one sequential fetch per point).
+        const ralliesMap = await bulkLoadRallies(videoKey, totalPoints);
         const allRallies = [];
         for (let i = 1; i <= totalPoints; i++) {
-          try {
-            const r = await fetch(`${API}/api/points/${videoKey}/${i}`);
-            if (r.ok) {
-              const data = await r.json();
-              allRallies.push(data);
-              pointRallyCache[i] = data;
-            }
-          } catch (e) { /* skip */ }
+          if (ralliesMap[i] != null) { allRallies.push(ralliesMap[i]); pointRallyCache[i] = ralliesMap[i]; }
         }
         if (allRallies.length === 0) return;
 
@@ -8208,6 +8441,7 @@ function showResults(msg) {
 
         let p1Shots = 0, p2Shots = 0;
         let p1Dist = 0, p2Dist = 0;
+        let p1EggIn = 0, p1EggTot = 0, p2EggIn = 0, p2EggTot = 0;
         const cls = { p1: {drive:0,drop:0,boast:0,volley:0}, p2: {drive:0,drop:0,boast:0,volley:0} };
         allRallies.forEach(rd => {
           (rd.rally || []).forEach(shot => {
@@ -8219,6 +8453,8 @@ function showResults(msg) {
           const d2 = movementDistance(rd, 'player_2');
           if (d1 != null) p1Dist += d1;
           if (d2 != null) p2Dist += d2;
+          const e1 = eggCounts(rd, 'player_1'); p1EggIn += e1.inside; p1EggTot += e1.total;
+          const e2 = eggCounts(rd, 'player_2'); p2EggIn += e2.inside; p2EggTot += e2.total;
         });
 
         dashState.matchAggregates = {
@@ -8227,6 +8463,7 @@ function showResults(msg) {
           avgRally: `${avgDur.toFixed(1)} s`,
           distP1: `${p1Dist.toFixed(0)} m`,
           distP2: `${p2Dist.toFixed(0)} m`,
+          eggTime: { p1: eggScore(p1EggIn, p1EggTot), p2: eggScore(p2EggIn, p2EggTot) },
           drives:  { p1: cls.p1.drive,  p2: cls.p2.drive },
           drops:   { p1: cls.p1.drop,   p2: cls.p2.drop },
           boasts:  { p1: cls.p1.boast,  p2: cls.p2.boast },
@@ -8288,12 +8525,18 @@ function showResults(msg) {
       const ptCurEl = document.getElementById('dash-point-cur');
       if (ptCurEl) ptCurEl.textContent = pt.point_number;
 
-      let data = pointRallyCache[pt.point_number];
+      let data = pointRallyCache[pt.point_number] || getCachedRally(videoKey, pt.point_number);
       if (!data) {
         try {
           const r = await fetch(`${API}/api/points/${videoKey}/${pt.point_number}`);
-          if (r.ok) { data = await r.json(); pointRallyCache[pt.point_number] = data; }
+          if (r.ok) {
+            data = await r.json();
+            pointRallyCache[pt.point_number] = data;
+            writeStatsCache(videoKey, { rallies: { [pt.point_number]: data } });
+          }
         } catch (e) { /* ignore */ }
+      } else {
+        pointRallyCache[pt.point_number] = data;
       }
       dashState.currentPointData = data || null;
       updateScrubBounds();
@@ -8423,23 +8666,15 @@ function showResults(msg) {
         }
         
         overviewLoading.textContent = `Loading 0/${totalPoints} points...`;
-        
-        // Fetch all point rallies
+
+        // Fetch all point rallies in parallel (cache-first).
+        const ralliesMap = await bulkLoadRallies(videoKey, totalPoints);
         const allRallies = [];
         for (let i = 1; i <= totalPoints; i++) {
-          try {
-            const r = await fetch(`${API}/api/points/${videoKey}/${i}`);
-            if (r.ok) {
-              const data = await r.json();
-              allRallies.push(data);
-              pointRallyCache[i] = data; // Cache for later use
-            }
-            overviewLoading.textContent = `Loading ${i}/${totalPoints} points...`;
-          } catch (e) {
-            console.warn(`Failed to load point ${i}:`, e);
-          }
+          if (ralliesMap[i] != null) { allRallies.push(ralliesMap[i]); pointRallyCache[i] = ralliesMap[i]; }
         }
-        
+        overviewLoading.textContent = `Loading ${totalPoints}/${totalPoints} points...`;
+
         if (allRallies.length === 0) {
           overviewLoading.textContent = "Failed to load point data";
           return;
@@ -8857,17 +9092,20 @@ function showResults(msg) {
       const statsContainer = document.getElementById(`pv-stats-${pointNum}`);
       if (!statsContainer) return;
       
-      // Check cache first
-      if (pointRallyCache[pointNum]) {
-        renderPointStats(statsContainer, pointRallyCache[pointNum]);
+      // Check in-memory then persistent cache first
+      const cached = pointRallyCache[pointNum] || getCachedRally(videoKey, pointNum);
+      if (cached) {
+        pointRallyCache[pointNum] = cached;
+        renderPointStats(statsContainer, cached);
         return;
       }
-      
+
       try {
         const r = await fetch(`${API}/api/points/${videoKey}/${pointNum}`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         pointRallyCache[pointNum] = data;
+        writeStatsCache(videoKey, { rallies: { [pointNum]: data } });
         renderPointStats(statsContainer, data);
       } catch (e) {
         console.error("Failed to load point rally:", e);
