@@ -8069,8 +8069,11 @@ function showResults(msg) {
     // Make retry function available globally
     window.retryLoadPoints = () => loadPoints(10, 3000);
     
-    // Start loading
-    loadPoints();
+    // Start loading. Defer to a microtask so the synchronous cache-first paint
+    // (applyPoints → renderPointsList) runs AFTER dashState/starredPoints are
+    // initialized below — otherwise it hits the `let` temporal dead zone and
+    // throws, leaving the points count set but the list empty (cache-hit only).
+    queueMicrotask(() => loadPoints());
     
     // ===================== Dashboard module =====================
     // Live, video-synced spatial panels + match/point/notes stats toggle.
@@ -8419,7 +8422,7 @@ function showResults(msg) {
       body.innerHTML = `<div class="dash-stats-grid">${[
         card('Duration', one(s.duration)),
         card('Total shots', one(s.totalShots)),
-        card('Avg rally', one(s.avgRally || s.duration)),
+        card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
         card('Distance', dual(s.distP1, s.distP2)),
         card('Drives', dual(s.drives.p1, s.drives.p2)),
         card('Drops', dual(s.drops.p1, s.drops.p2)),
