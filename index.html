@@ -3118,6 +3118,20 @@
     line-height: 1.5;
   }
 
+  .tag-share-players { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .tag-share-player {
+    padding: 14px 16px; border-radius: 12px; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); text-align: left;
+    font-family: inherit; font-size: 14px; font-weight: 600;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  }
+  .tag-share-player:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
+  .tag-share-player.selected { border-color: var(--accent); background: var(--accent-dim); }
+  .tag-share-player:active:not(:disabled) { transform: scale(0.98); }
+  .tag-share-player:disabled { opacity: 0.55; cursor: wait; }
+  .tag-share-player small { display: block; font-weight: 400; font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+
   .share-add-row {
     display: grid;
     grid-template-columns: 1fr 160px auto;
@@ -3274,6 +3288,12 @@
     font-size: 22px; font-weight: 700; line-height: 1.2;
     color: var(--text); margin-top: 4px;
   }
+  .dash-header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .dash-share-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; font-size: 14px; border-radius: 999px;
+  }
+  .dash-share-btn svg { margin-top: -1px; }
   .dash-meta { color: var(--text-dim); font-size: 13px; }
   .dash-meta kbd {
     background: var(--bg-elev-2, rgba(255,255,255,0.06));
@@ -3969,6 +3989,32 @@
   </div>
 </div>
 
+<!-- Tag-a-player invite modal (opened from the results viewer's Share button) -->
+<div id="tag-share-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Invite a player</h3>
+      <button class="modal-close" id="btn-close-tag-share" aria-label="Close">×</button>
+    </div>
+    <div class="share-section">
+      <div class="form-label">Which player is this for?</div>
+      <div class="tag-share-players">
+        <button type="button" class="tag-share-player" id="tag-share-p1" data-slot="1"></button>
+        <button type="button" class="tag-share-player" id="tag-share-p2" data-slot="2"></button>
+      </div>
+      <div class="share-link-hint">Whoever opens this link signs in with Google, gets tagged as the chosen player, and receives view access to this video.</div>
+      <div id="tag-share-link-wrap" style="display:none; margin-top:16px;">
+        <div class="form-label">Invite link for <span id="tag-share-for" class="modal-title-em"></span></div>
+        <div class="share-link-row">
+          <input type="text" class="form-input" id="tag-share-link-input" readonly>
+          <button class="btn btn-primary" id="btn-tag-share-copy">Copy link</button>
+        </div>
+      </div>
+      <div class="share-msg error" id="tag-share-msg" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Upgrade / subscription paywall modal (embedded Stripe Elements) -->
 <div id="upgrade-modal" class="modal-overlay" style="display:none;">
   <div class="modal-card">
@@ -4344,7 +4390,16 @@
         <div class="step-label">Complete</div>
         <div class="dash-title" id="results-summary"></div>
       </div>
-      <div class="dash-meta">Point <span id="dash-point-cur">–</span> of <span id="dash-point-total">–</span> · <kbd>←</kbd><kbd>→</kbd> nav · <kbd>space</kbd> play</div>
+      <div class="dash-header-right">
+        <button class="btn btn-primary dash-share-btn" id="btn-dash-share" title="Invite a player to tag themselves">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+          Share
+        </button>
+        <div class="dash-meta">Point <span id="dash-point-cur">–</span> of <span id="dash-point-total">–</span> · <kbd>←</kbd><kbd>→</kbd> nav · <kbd>space</kbd> play</div>
+      </div>
     </div>
 
     <div class="dashboard">
@@ -5428,6 +5483,9 @@ async function openVideo(key, data) {
   if (data.playerConfig) {
     playerConfig = data.playerConfig;
   }
+  // Only the video owner can mint player-tag invite links from the viewer.
+  const shareBtn = document.getElementById("btn-dash-share");
+  if (shareBtn) shareBtn.style.display = (data.ownerUid === currentUser.uid) ? "inline-flex" : "none";
   try {
     // Multi-game jobs share one physical upload under the parent key.
     const srcKey = data.parentVideoKey || key;
@@ -7201,22 +7259,29 @@ function wirePicker(n) {
 wirePicker(1);
 wirePicker(2);
 
+// Mint an invite token bound to a player slot on the given video and return the
+// shareable URL. Shared by the config-step picker and the results-viewer Share
+// button. Uses `videoKey` (the currently open video) unless a key is passed.
+async function mintPlayerInvite(slot, forVideoKey = videoKey) {
+  if (!forVideoKey || !currentUser) throw new Error("Not ready to create an invite.");
+  const token = crypto.randomUUID().replace(/-/g, "");
+  await setDoc(doc(fbFirestore, "invites", token), {
+    videoKey: forVideoKey,
+    playerSlot: slot,
+    createdBy: currentUser.uid,
+    createdAt: serverTimestamp(),
+    claimedBy: null,
+  });
+  return `${window.location.origin}/?invite=${encodeURIComponent(token)}`;
+}
+
 async function createInviteForPlayer(n) {
   if (!videoKey || !currentUser) return;
   const s = pickerSlot(n);
   s.inviteBtn.disabled = true;
   s.inviteBtn.textContent = "Creating link...";
   try {
-    const token = crypto.randomUUID().replace(/-/g, "");
-    await setDoc(doc(fbFirestore, "invites", token), {
-      videoKey,
-      playerSlot: n,
-      createdBy: currentUser.uid,
-      createdAt: serverTimestamp(),
-      claimedBy: null,
-    });
-    const url = `${window.location.origin}/?invite=${encodeURIComponent(token)}`;
-    s.inviteInput.value = url;
+    s.inviteInput.value = await mintPlayerInvite(n);
     s.invitePanel.style.display = "flex";
     s.inviteBtn.textContent = "Send invite link";
   } catch (err) {
@@ -7227,6 +7292,69 @@ async function createInviteForPlayer(n) {
     s.inviteBtn.disabled = false;
   }
 }
+
+// ---- Results-viewer "Share" button: tag a player + mint an invite link ----
+const tagShareModal = document.getElementById("tag-share-modal");
+function playerLabel(slot) {
+  const cfg = slot === 1 ? playerConfig.player_1 : playerConfig.player_2;
+  return (cfg && cfg.name && cfg.name.trim()) ? cfg.name.trim() : `Player ${slot}`;
+}
+function openTagShareModal() {
+  if (!videoKey || !currentUser) return;
+  document.getElementById("tag-share-link-wrap").style.display = "none";
+  document.getElementById("tag-share-link-input").value = "";
+  const msg = document.getElementById("tag-share-msg");
+  msg.style.display = "none"; msg.textContent = "";
+  [1, 2].forEach((slot) => {
+    const btn = document.getElementById(`tag-share-p${slot}`);
+    btn.disabled = false;
+    btn.classList.remove("selected");
+    btn.innerHTML = `${playerLabel(slot)}<small>Tag as Player ${slot}</small>`;
+  });
+  tagShareModal.style.display = "flex";
+}
+function closeTagShareModal() { tagShareModal.style.display = "none"; }
+
+async function createTagShareLink(slot) {
+  const btn = document.getElementById(`tag-share-p${slot}`);
+  const other = document.getElementById(`tag-share-p${slot === 1 ? 2 : 1}`);
+  const msg = document.getElementById("tag-share-msg");
+  msg.style.display = "none";
+  btn.disabled = true; other.disabled = true;
+  btn.classList.add("selected"); other.classList.remove("selected");
+  const prev = btn.innerHTML;
+  btn.innerHTML = `Creating link…`;
+  try {
+    const url = await mintPlayerInvite(slot);
+    document.getElementById("tag-share-for").textContent = playerLabel(slot);
+    document.getElementById("tag-share-link-input").value = url;
+    document.getElementById("tag-share-link-wrap").style.display = "block";
+  } catch (err) {
+    console.error("createTagShareLink failed:", err);
+    msg.textContent = `Could not create invite: ${err.code || err.message}`;
+    msg.style.display = "block";
+  } finally {
+    btn.innerHTML = prev;
+    btn.disabled = false; other.disabled = false;
+  }
+}
+
+document.getElementById("btn-dash-share").addEventListener("click", openTagShareModal);
+document.getElementById("btn-close-tag-share").addEventListener("click", closeTagShareModal);
+tagShareModal.addEventListener("click", (e) => { if (e.target === tagShareModal) closeTagShareModal(); });
+document.getElementById("tag-share-p1").addEventListener("click", () => createTagShareLink(1));
+document.getElementById("tag-share-p2").addEventListener("click", () => createTagShareLink(2));
+document.getElementById("btn-tag-share-copy").addEventListener("click", async () => {
+  const input = document.getElementById("tag-share-link-input");
+  const btn = document.getElementById("btn-tag-share-copy");
+  try {
+    await navigator.clipboard.writeText(input.value);
+    btn.textContent = "Copied!";
+    setTimeout(() => (btn.textContent = "Copy link"), 1500);
+  } catch (e) {
+    input.select(); input.setSelectionRange(0, input.value.length);
+  }
+});
 
 function showConfigUploadStatus(text, kind) {
   const banner = document.getElementById("config-upload-status");
