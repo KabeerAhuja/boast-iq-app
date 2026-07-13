@@ -3607,6 +3607,9 @@
   const __params = new URLSearchParams(location.search);
   window.__IS_DEMO__ = __params.has('demo');
   window.__IS_TRIAL__ = __params.has('trial');
+  // Arrived from a paid "Start 7-day trial" CTA: after Google sign-in, jump
+  // straight to Stripe checkout instead of waiting for the first upload.
+  window.__WANT_CHECKOUT__ = __params.has('checkout');
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
   // Direct public download URL for the demo source video. Uses the Firebase Storage
   // download-token endpoint, which is a public capability URL: it bypasses the Storage
@@ -4505,6 +4508,9 @@ if (pendingInviteOnLoad) {
 } else if (pendingCoachOnLoad) {
   document.getElementById("login-desc").textContent =
     "You've been invited to be coached. Sign in with Google to accept.";
+} else if (window.__WANT_CHECKOUT__) {
+  document.getElementById("login-desc").textContent =
+    "Sign in with Google to start your 7-day free trial.";
 }
 
 // ---- Recipient-side clip viewer (?clip=KEY&point=N) ----
@@ -4707,6 +4713,16 @@ onAuthStateChanged(fbAuth, async (user) => {
           }
         } catch (err) { console.warn("Auto-open after invite failed:", err); }
       }
+    }
+
+    // Arrived from a "Start 7-day trial" CTA: open Stripe checkout immediately
+    // after sign-in rather than deferring the paywall to the first upload.
+    if (window.__WANT_CHECKOUT__) {
+      window.__WANT_CHECKOUT__ = false;
+      clearCheckoutParam();
+      goToMyVideos();
+      if (!hasActiveSub()) openUpgradeModal();
+      return;
     }
     goToMyVideos();
   } else {
@@ -5996,6 +6012,12 @@ async function claimSharedVideo(videoKey) {
 function clearShareParam() {
   const url = new URL(window.location.href);
   url.searchParams.delete("share");
+  window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
+}
+
+function clearCheckoutParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("checkout");
   window.history.replaceState({}, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
 }
 
