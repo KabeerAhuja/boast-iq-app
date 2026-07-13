@@ -3517,7 +3517,7 @@
   }
   .dash-egg-big {
     font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--text);
-    font-size: 28px; line-height: 1; display: inline-flex; align-items: flex-end; gap: 3px;
+    font-size: 22px; line-height: 1; display: inline-flex; align-items: flex-end; gap: 3px;
     font-variant-numeric: tabular-nums;
   }
   .dash-egg-denom { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-bottom: 4px; }
@@ -4399,7 +4399,7 @@
             <div class="dash-shot-filter">
               <label><input type="checkbox" class="dash-filter-p1" checked><span class="dash-dot dash-dot-p1"></span><span class="dash-fname-p1">You</span></label>
               <label><input type="checkbox" class="dash-filter-p2" checked><span class="dash-dot dash-dot-p2"></span><span class="dash-fname-p2">Opp</span></label>
-              <label><input type="checkbox" id="dash-filter-egg"><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
+              <label><input type="checkbox" id="dash-filter-egg" checked><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
             </div>
           </div>
           <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
@@ -5429,7 +5429,9 @@ async function openVideo(key, data) {
     playerConfig = data.playerConfig;
   }
   try {
-    videoBlobUrl = await getDownloadURL(ref(fbStorage, `uploaded-videos/${key}.mp4`));
+    // Multi-game jobs share one physical upload under the parent key.
+    const srcKey = data.parentVideoKey || key;
+    videoBlobUrl = await getDownloadURL(ref(fbStorage, `uploaded-videos/${srcKey}.mp4`));
   } catch (err) {
     console.warn("Source video URL fetch failed:", err);
     videoBlobUrl = null;
@@ -5457,11 +5459,14 @@ async function openProcessingPreview(key, data) {
   document.getElementById("reprompt-section").style.display = "none";
 
   // Load the raw uploaded video so it can be watched while the pipeline runs.
+  // Multi-game jobs share one physical upload under the PARENT key — each game
+  // has no uploaded-videos/<gameKey>.mp4 of its own, so fall back to the parent.
+  const srcKey = data.parentVideoKey || key;
   const preview = document.getElementById("preview-video");
   preview.removeAttribute("src");
   preview.load();
   try {
-    preview.src = await getDownloadURL(ref(fbStorage, `uploaded-videos/${key}.mp4`));
+    preview.src = await getDownloadURL(ref(fbStorage, `uploaded-videos/${srcKey}.mp4`));
     preview.load();
   } catch (err) {
     // During "uploading" the raw file may not exist yet — the status bar still shows.
@@ -8037,7 +8042,7 @@ function showResults(msg) {
 
     const dashState = {
       filter: { p1: true, p2: true },
-      showEgg: false,
+      showEgg: true,
       scope: 'match',
       currentPointNum: null,   // 1-based, set when a point becomes "current"
       currentPointData: null,  // cached rally for current point (null until loaded)
