@@ -8416,37 +8416,16 @@ function showResults(msg) {
           <div class="dash-stat-row"><span class="dash-stat-name"><span class="dash-dot dash-dot-p2"></span>${dashState.p2Name}</span><span class="dash-stat-value">${b}</span></div>
         </div>`;
       const one = v => `<div class="dash-stat-value-big">${v}</div>`;
-      const blank = () => `<div class="dash-stat-card dash-stat-card-blank"></div>`;
-      const egg = s.eggTime || { p1: '–', p2: '–' };
-      const eggBox = (pc, name, v) => `
-        <div class="dash-stat-card dash-egg-card">
-          <div class="dash-egg-title">Egg<br>Time</div>
-          <div class="dash-egg-right">
-            <div class="dash-egg-name"><span class="dash-dot dash-dot-${pc}"></span>${name}</div>
-            <div class="dash-egg-big">${v}<span class="dash-egg-denom">/100</span></div>
-          </div>
-        </div>`;
-      body.innerHTML = `
-        <div class="dash-stats-stack">
-          <div class="dash-stats-grid">
-            ${card('Duration', one(s.duration))}
-            ${card('Total shots', one(s.totalShots))}
-            ${card('Avg rally', one(s.avgRally || s.duration))}
-            ${card('Distance', dual(s.distP1, s.distP2))}
-          </div>
-          <div class="dash-stats-grid">
-            ${eggBox('p1', dashState.p1Name, egg.p1)}
-            ${eggBox('p2', dashState.p2Name, egg.p2)}
-            ${blank()}
-            ${blank()}
-          </div>
-          <div class="dash-stats-grid">
-            ${card('Drives', dual(s.drives.p1, s.drives.p2))}
-            ${card('Drops', dual(s.drops.p1, s.drops.p2))}
-            ${card('Boasts', dual(s.boasts.p1, s.boasts.p2))}
-            ${card('Volleys', dual(s.volleys.p1, s.volleys.p2))}
-          </div>
-        </div>`;
+      body.innerHTML = `<div class="dash-stats-grid">${[
+        card('Duration', one(s.duration)),
+        card('Total shots', one(s.totalShots)),
+        card('Avg rally', one(s.avgRally || s.duration)),
+        card('Distance', dual(s.distP1, s.distP2)),
+        card('Drives', dual(s.drives.p1, s.drives.p2)),
+        card('Drops', dual(s.drops.p1, s.drops.p2)),
+        card('Boasts', dual(s.boasts.p1, s.boasts.p2)),
+        card('Volleys', dual(s.volleys.p1, s.volleys.p2)),
+      ].join('')}</div>`;
     }
 
     async function loadMatchAggregates() {
