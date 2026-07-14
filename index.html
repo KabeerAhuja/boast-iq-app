@@ -5045,9 +5045,13 @@ async function loadMyVideos() {
     loading.style.display = "none";
     // Drop parent docs of multi-game uploads (hiddenFromList) so users only
     // see the per-game cards in My Videos. Their per-game docs stay visible.
+    // Also drop videos this user soft-deleted: `hiddenFor` holds the uids that
+    // removed the video from their own dashboard — the doc (and its Storage
+    // files) stay in Firebase; it's just hidden per-user.
     myVideosCache = snap.docs
       .map((d) => ({ id: d.id, data: d.data() }))
-      .filter(({ data }) => !data.hiddenFromList);
+      .filter(({ data }) => !data.hiddenFromList)
+      .filter(({ data }) => !(Array.isArray(data.hiddenFor) && data.hiddenFor.includes(currentUser.uid)));
     await renderMyVideosFiltered();
   } catch (err) {
     console.error("loadMyVideos failed:", err);
@@ -5394,8 +5398,10 @@ async function renderVideoCard(videoKeyId, data) {
 
   const isOwner = data.ownerUid === currentUser.uid;
 
-  // 3-dot menu (owner-only actions for now)
-  if (isOwner) {
+  // 3-dot menu. Owner-only actions (Rename/Share) plus a soft Delete that any
+  // viewer can use to remove the video from their OWN dashboard — the doc and
+  // its Storage files stay in Firebase (see deleteVideoFromDashboard).
+  {
     const menuBtn = document.createElement("button");
     menuBtn.className = "video-card-menu-btn";
     menuBtn.type = "button";
@@ -5403,24 +5409,36 @@ async function renderVideoCard(videoKeyId, data) {
     menuBtn.textContent = "⋮";
     const pop = document.createElement("div");
     pop.className = "video-card-menu-pop";
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.textContent = "Rename";
-    renameBtn.addEventListener("click", (e) => {
+    if (isOwner) {
+      const renameBtn = document.createElement("button");
+      renameBtn.type = "button";
+      renameBtn.textContent = "Rename";
+      renameBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeAllVideoCardMenus();
+        openRenameVideoModal(videoKeyId, data);
+      });
+      const shareInMenuBtn = document.createElement("button");
+      shareInMenuBtn.type = "button";
+      shareInMenuBtn.textContent = "Share";
+      shareInMenuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeAllVideoCardMenus();
+        openShareDialog(videoKeyId, data);
+      });
+      pop.appendChild(renameBtn);
+      pop.appendChild(shareInMenuBtn);
+    }
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "danger";
+    deleteBtn.textContent = isOwner ? "Delete" : "Remove from my library";
+    deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       closeAllVideoCardMenus();
-      openRenameVideoModal(videoKeyId, data);
+      deleteVideoFromDashboard(videoKeyId, data);
     });
-    const shareInMenuBtn = document.createElement("button");
-    shareInMenuBtn.type = "button";
-    shareInMenuBtn.textContent = "Share";
-    shareInMenuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closeAllVideoCardMenus();
-      openShareDialog(videoKeyId, data);
-    });
-    pop.appendChild(renameBtn);
-    pop.appendChild(shareInMenuBtn);
+    pop.appendChild(deleteBtn);
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const wasOpen = pop.classList.contains("open");
@@ -5473,6 +5491,30 @@ async function renderVideoCard(videoKeyId, data) {
 
 function closeAllVideoCardMenus() {
   document.querySelectorAll(".video-card-menu-pop.open").forEach((el) => el.classList.remove("open"));
+}
+
+// Soft-delete a video from the current user's dashboard. The Firestore doc and
+// all Storage files are LEFT INTACT — we only add this user's uid to `hiddenFor`,
+// which loadMyVideos filters out. Per-user, so removing a shared video only
+// affects the person who removed it, never the owner or other viewers.
+async function deleteVideoFromDashboard(videoKeyId, data) {
+  const isOwner = data.ownerUid === currentUser.uid;
+  const label = data.title || videoKeyId;
+  const ok = confirm(isOwner
+    ? `Delete "${label}" from your dashboard?\n\nIt will no longer appear in your library. The video isn't erased — it stays stored and can be restored by support if needed.`
+    : `Remove "${label}" from your library?\n\nIt will no longer appear in your dashboard. The owner and other viewers keep their access.`);
+  if (!ok) return;
+  try {
+    await updateDoc(doc(fbFirestore, "videos", videoKeyId), {
+      hiddenFor: arrayUnion(currentUser.uid),
+    });
+    // Drop from the in-memory cache and re-render without a refetch.
+    myVideosCache = myVideosCache.filter((v) => v.id !== videoKeyId);
+    await renderMyVideosFiltered();
+  } catch (err) {
+    console.error("delete video failed:", err);
+    alert(`Couldn't delete this video: ${err.code || err.message}`);
+  }
 }
 // Dismiss any open card menu when clicking elsewhere on the page.
 document.addEventListener("click", () => closeAllVideoCardMenus());
@@ -6309,13 +6351,19 @@ async function claimSharedVideo(videoKey) {
     }
     const data = snap.data();
     const access = data.accessUids || [];
-    if (access.includes(currentUser.uid)) {
-      // Already have access — nothing to do.
+    const hiddenFor = data.hiddenFor || [];
+    const alreadyHasAccess = access.includes(currentUser.uid);
+    const isHidden = hiddenFor.includes(currentUser.uid);
+    if (alreadyHasAccess && !isHidden) {
+      // Already have access and it isn't hidden — nothing to do.
       return true;
     }
+    // Grant access if missing, and always un-hide: re-sharing a video the user
+    // previously soft-deleted must bring it back into their dashboard.
     await updateDoc(docRef, {
       viewerUids: arrayUnion(currentUser.uid),
       accessUids: arrayUnion(currentUser.uid),
+      hiddenFor: arrayRemove(currentUser.uid),
     });
     return true;
   } catch (err) {
@@ -6398,6 +6446,9 @@ async function claimInvite(token) {
       },
       viewerUids: arrayUnion(currentUser.uid),
       accessUids: arrayUnion(currentUser.uid),
+      // Un-hide: if this user previously soft-deleted the video, accepting the
+      // invite must bring it back into their dashboard (see deleteVideoFromDashboard).
+      hiddenFor: arrayRemove(currentUser.uid),
     };
     await updateDoc(videoRef, updates);
     await updateDoc(inviteRef, { claimedBy: currentUser.uid, claimedAt: serverTimestamp() });
