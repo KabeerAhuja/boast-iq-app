@@ -4755,8 +4755,8 @@ async function renderClipViewer(videoKey, pointNumber) {
     return;
   }
 
-  const p1Name = pointMeta?.player_1?.name || "Player 1";
-  const p2Name = pointMeta?.player_2?.name || "Player 2";
+  const p1Name = resolvePlayerName(1, pointMeta?.player_1?.name);
+  const p2Name = resolvePlayerName(2, pointMeta?.player_2?.name);
   titleEl.textContent = `${p1Name} vs ${p2Name} · Point ${pointNumber}`;
   const dur = pointMeta?.duration_sec;
   const shots = pointMeta?.total_shots;
@@ -4940,6 +4940,24 @@ let frameImage = null, repromptImage = null;
 let repromptP1 = null, repromptP2 = null;
 let videoBlobUrl = null;
 let playerConfig = { player_1: { name: "Player 1", handedness: "right" }, player_2: { name: "Player 2", handedness: "right" } };
+
+// Resolve the display name for a player slot. The live `playerConfig` (loaded
+// from the video doc, updated by renames and accepted invites) is the source of
+// truth and must win over `fallbackName` — the name baked into the stats index /
+// point JSON at processing time. Without this, tagging a player via an invite
+// link would never change the name shown in the results view. Falls back to the
+// baked name only when the live slot is still a bare default ("Player 1", etc.).
+function resolvePlayerName(slot, fallbackName) {
+  const cfg = (playerConfig && playerConfig[`player_${slot}`]) || {};
+  const cfgName = (cfg.name || "").trim();
+  const fb = (fallbackName || "").trim();
+  const isDefault = (nm) => !nm || /^player[\s_]*(1|2|one|two)$/i.test(nm);
+  // A slot tagged to a real account (uid) always shows that account's name.
+  if (cfg.uid && !isDefault(cfgName)) return cfgName;
+  if (!isDefault(cfgName)) return cfgName;   // manual rename post-processing
+  if (fb) return fb;                          // baked name from the stats index
+  return cfgName || `Player ${slot}`;
+}
 let totalSrcFrames = 0, completedSrcFrames = 0, currentSegSrcStart = 0, currentSegSrcFrames = 0, currentSegPct = 0, processingStartTime = 0;
 
 // ---- Multi-game segmentation state ----
@@ -5966,6 +5984,7 @@ let _upgradeElements = null;   // Elements instance for the current attempt
 let _upgradeMode = null;       // "setup" (trial → save card) or "payment"
 let _upgradeSubId = null;      // Stripe subscription id for the current attempt
 let _promoApplied = false;     // a valid promo code has been attached
+let _noCardRedeem = false;     // applied code fully covers the plan → skip card
 let _upgradeSubmitting = false;
 
 document.getElementById("btn-close-upgrade").addEventListener("click", () => { if (!_upgradeSubmitting) closeUpgradeModal(); });
@@ -6023,10 +6042,23 @@ async function handleApplyPromo() {
     }
     const data = await resp.json();
     _promoApplied = true;
-    const dollars = (data.newMonthlyCents / 100).toFixed(0);
-    promoMsg(`✓ Code applied — $${dollars}/month after your trial.`, "success");
     input.disabled = true;
     applyBtn.textContent = "Applied";
+    if (data.noCardRequired) {
+      // Code fully covers the plan → drop card collection entirely.
+      _noCardRedeem = true;
+      const label = data.freeLabel || "free";
+      promoMsg(`🎉 Code applied — ${label}, no credit card required.`, "success");
+      // Hide the Stripe card fields and switch the button to a plain redeem.
+      const payEl = document.getElementById("upgrade-payment-element");
+      if (payEl) payEl.style.display = "none";
+      const subBtn = document.getElementById("btn-upgrade-subscribe");
+      subBtn.disabled = false;
+      subBtn.textContent = `Start using BoastIQ — ${label}`;
+    } else {
+      const dollars = (data.newMonthlyCents / 100).toFixed(0);
+      promoMsg(`✓ Code applied — $${dollars}/month after your trial.`, "success");
+    }
   } catch (err) {
     promoMsg(err.message || "Couldn't apply that code.", "error");
     applyBtn.disabled = false;
@@ -6053,16 +6085,19 @@ function closeUpgradeModal() {
 
 function resetPromoUI() {
   _promoApplied = false;
+  _noCardRedeem = false;
   const row = document.getElementById("upgrade-promo-row");
   const toggle = document.getElementById("upgrade-promo-toggle");
   const input = document.getElementById("upgrade-promo-input");
   const applyBtn = document.getElementById("btn-apply-promo");
   const msg = document.getElementById("upgrade-promo-msg");
+  const payEl = document.getElementById("upgrade-payment-element");
   if (row) row.style.display = "none";
   if (toggle) toggle.hidden = false;
   if (input) { input.value = ""; input.disabled = false; }
   if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = "Apply"; }
   if (msg) { msg.style.display = "none"; msg.textContent = ""; }
+  if (payEl) payEl.style.display = "";   // un-hide card fields for next open
 }
 
 // Reflect the selected plan in the toggle buttons + price line.
@@ -6155,9 +6190,25 @@ async function loadCheckoutForPlan(plan) {
 }
 
 async function handleUpgradeSubscribe() {
-  if (!_stripe || !_upgradeElements || _upgradeSubmitting) return;
-  _upgradeSubmitting = true;
+  if (!_stripe || _upgradeSubmitting) return;
   const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
+
+  // No-card redemption: a fully-covering code was applied, so the subscription
+  // (already created + trialing, with the 100%-off coupon attached) needs no
+  // card. Just wait for access and go.
+  if (_noCardRedeem) {
+    _upgradeSubmitting = true;
+    subscribeBtn.disabled = true;
+    subscribeBtn.textContent = "Setting up…";
+    const ok = await pollForActiveSub();
+    _upgradeSubmitting = false;
+    if (ok) { closeUpgradeModal(); resumePendingUpload(); }
+    else { upgradeMsg("Almost there — activation is taking a moment. Refresh the page shortly.", "info"); subscribeBtn.disabled = false; }
+    return;
+  }
+
+  if (!_upgradeElements) return;
+  _upgradeSubmitting = true;
   subscribeBtn.disabled = true;
   subscribeBtn.textContent = "Processing…";
   clearUpgradeMsg();
@@ -8682,8 +8733,8 @@ function showResults(msg) {
         document.getElementById('dash-point-total').textContent = totalPoints || '–';
         if (totalPoints === 0) return;
 
-        dashState.p1Name = indexData.player_1?.name || playerConfig.player_1?.name || 'Player 1';
-        dashState.p2Name = indexData.player_2?.name || playerConfig.player_2?.name || 'Player 2';
+        dashState.p1Name = resolvePlayerName(1, indexData.player_1?.name);
+        dashState.p2Name = resolvePlayerName(2, indexData.player_2?.name);
         document.querySelectorAll('.dash-fname-p1').forEach(el => { el.textContent = dashState.p1Name; });
         document.querySelectorAll('.dash-fname-p2').forEach(el => { el.textContent = dashState.p2Name; });
 
@@ -8941,8 +8992,8 @@ function showResults(msg) {
         }
         
         // Calculate aggregate stats
-        const p1Name = indexData.player_1?.name || playerConfig.player_1?.name || "Player 1";
-        const p2Name = indexData.player_2?.name || playerConfig.player_2?.name || "Player 2";
+        const p1Name = resolvePlayerName(1, indexData.player_1?.name);
+        const p2Name = resolvePlayerName(2, indexData.player_2?.name);
         
         // Duration stats
         const durations = allRallies.map(r => r.duration_sec || 0);
@@ -9375,8 +9426,8 @@ function showResults(msg) {
     
     function renderPointStats(container, data) {
       const rally = data.rally || [];
-      const p1Name = data.player_1?.name || playerConfig.player_1?.name || "Player 1";
-      const p2Name = data.player_2?.name || playerConfig.player_2?.name || "Player 2";
+      const p1Name = resolvePlayerName(1, data.player_1?.name);
+      const p2Name = resolvePlayerName(2, data.player_2?.name);
       
       // Calculate stats per player
       const p1Shots = rally.filter(s => s.hit_by === "player_1");
