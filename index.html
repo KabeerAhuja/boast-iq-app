@@ -4055,6 +4055,23 @@
   </div>
 </div>
 
+<!-- Free-upload nudge: shown after a non-subscriber's upload with the count left -->
+<div id="free-uploads-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Upload started</h3>
+      <button class="modal-close" id="btn-close-free-uploads" aria-label="Close">×</button>
+    </div>
+    <div class="share-section">
+      <p id="free-uploads-msg" style="margin:0 0 18px;line-height:1.5;"></p>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button class="btn" id="btn-free-uploads-dismiss">Continue</button>
+        <button class="btn btn-primary" id="btn-free-uploads-subscribe">Subscribe now</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Login overlay (shown when not signed in) -->
 <div id="login-overlay" class="login-overlay">
   <div class="login-card">
@@ -4952,6 +4969,15 @@ let _selectedPlan = "monthly";
 // True once the signed-in user's users/{uid}.subscriptionStatus grants access.
 function hasActiveSub() {
   return ["active", "trialing"].includes(currentUserDoc?.subscriptionStatus);
+}
+// Free source-video uploads granted per account before the paywall. MUST match
+// FREE_UPLOAD_LIMIT in Modal_app.py — the backend is the source of truth; this is
+// only for pre-upload UX (block/nudge). `videosUploaded` is a monotonic counter on
+// users/{uid} written server-side at /api/create-job.
+const FREE_UPLOAD_LIMIT = 3;
+function freeUploadsRemaining() {
+  if (hasActiveSub()) return Infinity;
+  return Math.max(0, FREE_UPLOAD_LIMIT - (currentUserDoc?.videosUploaded || 0));
 }
 // Headers for gated /api endpoints — attaches the Firebase ID token so the
 // backend can verify identity + subscription. (Anonymous trial users send an
@@ -5903,6 +5929,20 @@ let _upgradeSubmitting = false;
 document.getElementById("btn-close-upgrade").addEventListener("click", () => { if (!_upgradeSubmitting) closeUpgradeModal(); });
 upgradeModal.addEventListener("click", (e) => { if (e.target === upgradeModal && !_upgradeSubmitting) closeUpgradeModal(); });
 document.getElementById("btn-upgrade-subscribe").addEventListener("click", handleUpgradeSubscribe);
+
+// ---- Free-upload nudge (non-subscriber, still within the free tier) --------
+const freeUploadsModal = document.getElementById("free-uploads-modal");
+function showFreeUploadsLeft(remaining) {
+  const n = Math.max(0, remaining | 0);
+  document.getElementById("free-uploads-msg").innerHTML =
+    `You have <strong>${n}</strong> free video${n === 1 ? "" : "s"} left. Subscribe now for unlimited uploads.`;
+  freeUploadsModal.style.display = "flex";
+}
+function hideFreeUploadsModal() { freeUploadsModal.style.display = "none"; }
+document.getElementById("btn-free-uploads-dismiss").addEventListener("click", hideFreeUploadsModal);
+document.getElementById("btn-close-free-uploads").addEventListener("click", hideFreeUploadsModal);
+freeUploadsModal.addEventListener("click", (e) => { if (e.target === freeUploadsModal) hideFreeUploadsModal(); });
+document.getElementById("btn-free-uploads-subscribe").addEventListener("click", () => { hideFreeUploadsModal(); openUpgradeModal(); });
 document.getElementById("upgrade-promo-toggle").addEventListener("click", () => {
   document.getElementById("upgrade-promo-row").style.display = "flex";
   document.getElementById("upgrade-promo-toggle").hidden = true;
@@ -6862,12 +6902,17 @@ async function handleFile(file) {
   }
   console.log("[upload] accepted file", { name: file.name, type: file.type, size: file.size });
   if (!currentUser) { alert("You must be signed in to upload."); return; }
-  // Paywall: uploading/analyzing requires an active subscription. Trial mode
-  // (the one free anonymous upload lead-magnet) is exempt and keeps its own gate.
+  // Paywall: each account gets FREE_UPLOAD_LIMIT free uploads from creation; only
+  // once those are used up does uploading require a subscription. Trial mode (the one
+  // free anonymous upload lead-magnet) is exempt and keeps its own gate below.
   if (!window.__IS_TRIAL__ && !hasActiveSub()) {
-    pendingUploadFile = file;
-    openUpgradeModal();
-    return;
+    // Freshen the server-side count before deciding (it changes as uploads happen).
+    await refreshCurrentUserDoc();
+    if (freeUploadsRemaining() <= 0) {
+      pendingUploadFile = file;
+      openUpgradeModal();
+      return;
+    }
   }
   if (window.__IS_TRIAL__) {
     if (localStorage.getItem("boastiq_trial_used") === "1") {
@@ -6938,10 +6983,12 @@ async function handleFile(file) {
   firebasePath = `uploaded-videos/${videoKey}.mp4`;
   uploadAbort = null;
   uploadPromise = (async () => {
+    // is_new_upload flags THIS as the one create-job that consumes a free slot; the
+    // per-game processing jobs spawned later for the same upload must not (they omit it).
     const jobResp = await fetch(`${API}/api/create-job`, {
       method: "POST",
       headers: await authHeaders(),
-      body: JSON.stringify({ filename: file.name, video_key: videoKey }),
+      body: JSON.stringify({ filename: file.name, video_key: videoKey, is_new_upload: true }),
     });
     if (!jobResp.ok) {
       let detail = `HTTP ${jobResp.status}`;
@@ -6950,12 +6997,23 @@ async function handleFile(file) {
         detail = errBody.detail || errBody.error || detail;
       } catch (_) { /* body wasn't JSON */ }
       if (jobResp.status === 402) {
-        throw new Error("Subscription required — ask an admin to grant access, then try again.");
+        // Free tier exhausted (backstop — the handleFile gate normally catches this
+        // first). Prompt to subscribe and offer to resume this file afterwards.
+        pendingUploadFile = file;
+        openUpgradeModal();
+        updateVideoStatus(videoKey, "failed");
+        throw new Error("Free uploads used up — subscribe to continue.");
       }
       throw new Error(`Could not create job: ${detail}`);
     }
     const jobData = await jobResp.json();
     jobId = jobData.job_id;
+    // Reflect the slot just consumed in the local user doc, and nudge non-subscribers
+    // with how many free uploads remain.
+    if (typeof jobData.free_uploads_remaining === "number") {
+      if (currentUserDoc) currentUserDoc.videosUploaded = FREE_UPLOAD_LIMIT - jobData.free_uploads_remaining;
+      if (jobData.subscribed === false) showFreeUploadsLeft(jobData.free_uploads_remaining);
+    }
 
     // Signed PUT URL for direct GCS upload (faster than uploadBytesResumable for typical files).
     const urlResp = await fetch(`${API}/api/get-upload-url`, {
