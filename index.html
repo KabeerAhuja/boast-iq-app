@@ -4861,17 +4861,22 @@ onAuthStateChanged(fbAuth, async (user) => {
     }
 
     // If the user arrived via a share link, claim access then land on the video.
+    // A full-match link (?share=<parentKey>&games=N) grants access to every game
+    // and opens the first one; a normal link grants + opens a single video.
     const pendingKey = getPendingShareKey();
     if (pendingKey) {
-      const ok = await claimSharedVideo(pendingKey);
+      const pendingGames = getPendingShareGames();
+      const openKey = pendingGames > 0
+        ? await claimSharedMatch(pendingKey, pendingGames)
+        : (await claimSharedVideo(pendingKey) ? pendingKey : null);
       clearShareParam();
-      if (ok) {
-        // Load My Videos so the shared one appears, then open it.
+      if (openKey) {
+        // Load My Videos so the shared match/video appears, then open it.
         await loadMyVideos();
         try {
-          const snap = await getDoc(doc(fbFirestore, "videos", pendingKey));
+          const snap = await getDoc(doc(fbFirestore, "videos", openKey));
           if (snap.exists()) {
-            await openVideo(pendingKey, snap.data());
+            await openVideo(openKey, snap.data());
             return;
           }
         } catch (err) { console.warn("Auto-open after share failed:", err); }
@@ -5282,10 +5287,41 @@ async function renderMatchGroupCard(parentKey, games) {
   card.appendChild(body);
   card.appendChild(list);
 
+  // Owner-only 3-dot menu: "Share match" grants a recipient access to ALL of
+  // the match's games at once (mirrors the single-video card menu).
+  if (games[0] && games[0].data.ownerUid === currentUser.uid) {
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "video-card-menu-btn";
+    menuBtn.type = "button";
+    menuBtn.setAttribute("aria-label", "Match options");
+    menuBtn.textContent = "⋮";
+    const pop = document.createElement("div");
+    pop.className = "video-card-menu-pop";
+    const shareBtn = document.createElement("button");
+    shareBtn.type = "button";
+    shareBtn.textContent = "Share match";
+    shareBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeAllVideoCardMenus();
+      openShareMatchDialog(parentKey, games, rootTitle);
+    });
+    pop.appendChild(shareBtn);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = pop.classList.contains("open");
+      closeAllVideoCardMenus();
+      if (!wasOpen) pop.classList.add("open");
+    });
+    card.appendChild(menuBtn);
+    card.appendChild(pop);
+  }
+
   card.addEventListener("click", (e) => {
     // Ignore clicks that originated inside the games list (rows have their own
     // stopPropagation, but this is belt+braces).
     if (list.contains(e.target)) return;
+    // A click on the ⋮ menu / its popover must not expand the card.
+    if (e.target.closest(".video-card-menu-btn") || e.target.closest(".video-card-menu-pop")) return;
     card.classList.toggle("expanded");
   });
 
@@ -5967,6 +6003,7 @@ async function removeCurrentCoach() {
 
 // ---- Sharing dialog ----
 let currentSharingVideoKey = null;
+let currentShareMatch = null;   // {parentKey, n} when sharing a full match; null for a single video
 const shareModal = document.getElementById("share-modal");
 const shareTitleEl = document.getElementById("share-video-title");
 const shareLinkInput = document.getElementById("share-link-input");
@@ -6265,9 +6302,18 @@ function buildShareUrl(videoKey) {
   return `${window.location.origin}/?share=${encodeURIComponent(videoKey)}`;
 }
 
+// Full-match share link: the recipient will be granted access to every game
+// (parentKey__g1 … parentKey__gN) when they open it. `games` carries N so the
+// redeemer can derive the game keys without needing to read them first.
+function buildMatchShareUrl(parentKey, n) {
+  return `${window.location.origin}/?share=${encodeURIComponent(parentKey)}&games=${n}`;
+}
+
 async function handleShareLinkCopy() {
-  if (!currentSharingVideoKey) return;
-  const url = buildShareUrl(currentSharingVideoKey);
+  if (!currentSharingVideoKey && !currentShareMatch) return;
+  const url = currentShareMatch
+    ? buildMatchShareUrl(currentShareMatch.parentKey, currentShareMatch.n)
+    : buildShareUrl(currentSharingVideoKey);
   try {
     await navigator.clipboard.writeText(url);
     showShareMsg("Link copied to clipboard.", "success");
@@ -6291,6 +6337,7 @@ function openShareDialog(videoKey, data) {
     alert("Only the owner can manage sharing for this video.");
     return;
   }
+  currentShareMatch = null;
   currentSharingVideoKey = videoKey;
   shareTitleEl.textContent = data.title || videoKey;
   shareLinkInput.value = buildShareUrl(videoKey);
@@ -6299,9 +6346,27 @@ function openShareDialog(videoKey, data) {
   renderShareList();
 }
 
+// Full-match share: owner-gated. Opens the same modal but with a link that
+// grants access to every game of the match. The "who has access" list is read
+// from Game 1 as a representative (all games are shared together).
+function openShareMatchDialog(parentKey, games, rootTitle) {
+  if (!games[0] || games[0].data.ownerUid !== currentUser.uid) {
+    alert("Only the owner can share this match.");
+    return;
+  }
+  currentShareMatch = { parentKey, n: games.length };
+  currentSharingVideoKey = games[0].id;  // representative for the access list
+  shareTitleEl.textContent = rootTitle || parentKey;
+  shareLinkInput.value = buildMatchShareUrl(parentKey, games.length);
+  clearShareMsg();
+  shareModal.style.display = "flex";
+  renderShareList();
+}
+
 function closeShareDialog() {
   shareModal.style.display = "none";
   currentSharingVideoKey = null;
+  currentShareMatch = null;
   shareList.innerHTML = "";
 }
 
@@ -6389,6 +6454,26 @@ function buildShareRow({ uid, role, profile }) {
 function getPendingShareKey() {
   const params = new URLSearchParams(window.location.search);
   return params.get("share");
+}
+
+// For a full-match share link (?share=<parentKey>&games=N), the number of
+// games. Returns 0 for a normal single-video share link.
+function getPendingShareGames() {
+  const params = new URLSearchParams(window.location.search);
+  const n = parseInt(params.get("games"), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// Claim access to every game of a match: parentKey__g1 … parentKey__gN.
+// Returns the first game key that was successfully claimed (to auto-open).
+async function claimSharedMatch(parentKey, n) {
+  let firstOk = null;
+  for (let i = 1; i <= n; i++) {
+    const gameKey = makeGameVideoKey(parentKey, i);
+    const ok = await claimSharedVideo(gameKey);
+    if (ok && !firstOk) firstOk = gameKey;
+  }
+  return firstOk;
 }
 
 async function claimSharedVideo(videoKey) {
