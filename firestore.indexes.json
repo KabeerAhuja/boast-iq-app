@@ -1,0 +1,14 @@
+{
+  "indexes": [
+    {
+      "//": "My Videos + calendar: where(accessUids array-contains uid) + orderBy(createdAt desc). Already exists in the project.",
+      "collectionGroup": "videos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "accessUids", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

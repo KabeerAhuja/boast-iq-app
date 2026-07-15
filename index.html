@@ -4518,12 +4518,12 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, query, where, orderBy, getDocs, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, arrayUnion, arrayRemove, limit, writeBatch, startAt, endAt } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBa60PoCLm9ggt-7WDHBT3n_WfNggIaXKw",
-  authDomain: "app.boast-iq.com",
+  authDomain: "boastiq.firebaseapp.com",
   projectId: "boastiq",
   storageBucket: "boastiq.firebasestorage.app",
   messagingSenderId: "1002696629084",
@@ -4658,49 +4658,17 @@ const userName = document.getElementById("user-name");
 const btnSignIn = document.getElementById("btn-google-signin");
 const btnSignOut = document.getElementById("btn-signout");
 
-// In-app/embedded browsers (Messages, WhatsApp, Instagram, iOS WebViews, etc.)
-// block popups and third-party storage, which makes signInWithPopup loop
-// forever — exactly the context where shared links get opened. Detect those and
-// use a full-page redirect instead, which works everywhere and returns to the
-// same URL (preserving ?share=…&games=N so the claim still runs).
-function isInAppBrowser() {
-  const ua = navigator.userAgent || "";
-  if (/FBAN|FBAV|Instagram|Line\/|WhatsApp|Snapchat|Twitter|Pinterest|; wv\)|GSA\//i.test(ua)) return true;
-  // iOS WebViews (non-Safari) don't include "Safari" or "CriOS"/"FxiOS" in the UA.
-  if (/iPhone|iPad|iPod/.test(ua) && !/Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua)) return true;
-  return false;
-}
-
 btnSignIn.addEventListener("click", async () => {
   btnSignIn.disabled = true;
   try {
-    if (isInAppBrowser()) {
-      // Popup would loop here — go straight to redirect.
-      await signInWithRedirect(fbAuth, googleProvider);
-      return;
-    }
     await signInWithPopup(fbAuth, googleProvider);
   } catch (err) {
-    console.error("Popup sign-in failed:", err);
-    // Any popup problem (blocked, closed, unsupported, storage-partitioned) →
-    // fall back to redirect rather than dead-ending the user.
-    const popupIssue = /popup|cancelled|blocked|unsupported|web-storage|operation-not-supported|internal-error/i
-      .test(`${err.code || ""} ${err.message || ""}`);
-    if (popupIssue) {
-      try { await signInWithRedirect(fbAuth, googleProvider); return; }
-      catch (e2) { console.error("Redirect sign-in failed:", e2); alert(`Sign-in failed: ${e2.code || e2.message}`); }
-    } else {
-      alert(`Sign-in failed: ${err.code || err.message}`);
-    }
+    console.error("Sign-in failed:", err);
+    alert(`Sign-in failed: ${err.code || err.message}`);
   } finally {
     btnSignIn.disabled = false;
   }
 });
-
-// Complete any pending redirect sign-in on load (fallback path above). The user
-// object then flows through onAuthStateChanged, which runs the normal share-claim
-// logic. Errors here are non-fatal — the login overlay stays up so they can retry.
-getRedirectResult(fbAuth).catch((err) => console.warn("getRedirectResult:", err));
 
 btnSignOut.addEventListener("click", async () => {
   setUserMenuOpen(false);

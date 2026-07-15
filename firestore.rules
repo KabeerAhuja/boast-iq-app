@@ -1,0 +1,252 @@
+rules_version = '2';
+
+// ==========================================================================
+// BoastIQ Firestore security rules  —  app.boast-iq.com (repo: boast-iq-app)
+//
+// Database: "default"  (the literal name "default", NOT the "(default)"
+//   placeholder — in the Console, select the "default" database before
+//   pasting these).
+//
+// The Modal backend uses the Firebase Admin SDK, which BYPASSES these rules;
+// they govern only browser (client SDK) access. Every client read/write in
+// boast-iq-app/index.html was inventoried against these rules.
+//
+// Admin: there are NO custom claims. Admin is a hardcoded email checked
+//   client-side; here we mirror it via the verified Google token email.
+// ==========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Global helpers
+    // ---------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function uid() {
+      return request.auth.uid;
+    }
+    function email() {
+      return ('email' in request.auth.token) ? request.auth.token.email.lower() : '';
+    }
+    function isAdmin() {
+      return isSignedIn() && email() == 'kasurgeon04@gmail.com';
+    }
+
+    // =====================================================================
+    // users/{userId}
+    //   Readable by any signed-in user (coach search, share-list name/email
+    //   resolution, roster). Most writes are to the caller's OWN doc; two
+    //   controlled cross-user writes exist (coach roster + coach detach), plus
+    //   admin (isCoach / subscription grants).
+    // =====================================================================
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow delete: if false;
+
+      allow create: if isSignedIn() && (userId == uid() || isAdmin());
+
+      allow update: if isSignedIn() && (
+        userId == uid()
+        || isAdmin()
+        || studentAcceptingInvite()
+        || coachDetachingStudent()
+      );
+
+      // A student accepting a coach invite adds ONLY themselves to the coach's
+      // `students` array. Authorized by a coachInvite keyed to the student's
+      // email that names this coach (userId).
+      function studentAcceptingInvite() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['students'])
+          && request.resource.data.students.toSet()
+               == resource.data.get('students', []).toSet().union([uid()].toSet())
+          && email() != ''
+          && exists(/databases/$(database)/documents/coachInvites/$(email()))
+          && get(/databases/$(database)/documents/coachInvites/$(email())).data.coachUid == userId;
+      }
+
+      // A coach removing a student clears that student's `coachUid` — but ONLY
+      // if the coach is that student's CURRENT coach (can't detach on behalf of
+      // another coach).
+      function coachDetachingStudent() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['coachUid'])
+          && request.resource.data.coachUid == null
+          && resource.data.get('coachUid', null) == uid();
+      }
+    }
+
+    // =====================================================================
+    // coachInvites/{inviteEmail}   (doc id = lowercased invitee email)
+    // =====================================================================
+    match /coachInvites/{inviteEmail} {
+      // The invitee (email match), the coach who created it, or an admin.
+      allow read: if isSignedIn() && (
+        email() == inviteEmail
+        || resource.data.coachUid == uid()
+        || isAdmin()
+      );
+
+      // A coach mints an invite, stamped with themselves as coachUid.
+      allow create: if isSignedIn() && request.resource.data.coachUid == uid();
+
+      // Update: a coach may (re)write an invite naming THEMSELVES as coachUid
+      // (covers re-invites and a different coach reusing the email slot); the
+      // invitee may accept/decline, but cannot change which coach it names.
+      allow update: if isSignedIn() && (
+        request.resource.data.coachUid == uid()
+        || (email() == inviteEmail && request.resource.data.coachUid == resource.data.coachUid)
+      );
+
+      allow delete: if isSignedIn() && (resource.data.coachUid == uid() || isAdmin());
+    }
+
+    // =====================================================================
+    // invites/{token}   (player-tag invites; token = random 32-char hex)
+    // =====================================================================
+    match /invites/{token} {
+      // Any signed-in holder of the token can read it (required to claim).
+      allow read: if isSignedIn();
+
+      // Mint: only the OWNER of the referenced video, stamped as createdBy and
+      // not-yet-claimed.
+      allow create: if isSignedIn()
+        && request.resource.data.createdBy == uid()
+        && request.resource.data.claimedBy == null
+        && request.resource.data.playerSlot in [1, 2]
+        && request.resource.data.videoKey is string
+        && exists(/databases/$(database)/documents/videos/$(request.resource.data.videoKey))
+        && get(/databases/$(database)/documents/videos/$(request.resource.data.videoKey)).data.ownerUid == uid();
+
+      // Claim: one-time transition. Only an unclaimed invite may be claimed;
+      // the claimant stamps themselves; core fields stay immutable.
+      allow update: if isSignedIn()
+        && resource.data.claimedBy == null
+        && request.resource.data.claimedBy == uid()
+        && request.resource.data.videoKey == resource.data.videoKey
+        && request.resource.data.playerSlot == resource.data.playerSlot
+        && request.resource.data.createdBy == resource.data.createdBy;
+
+      allow delete: if isSignedIn() && resource.data.createdBy == uid();
+    }
+
+    // =====================================================================
+    // videos/{videoKey}
+    // =====================================================================
+    match /videos/{videoKey} {
+
+      // ---- read ----
+      allow read: if isSignedIn() && (
+        isAdmin()
+        || resource.data.ownerUid == uid()
+        || uid() in resource.data.accessUids
+      );
+
+      // ---- create ----  (owner only; single uploads AND per-game docs)
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == uid()
+        && uid() in request.resource.data.accessUids;
+
+      // ---- delete ----  (no client deletes today; owner/admin only)
+      allow delete: if isSignedIn() && (isAdmin() || resource.data.ownerUid == uid());
+
+      // ---- update ----
+      allow update: if isSignedIn() && (
+        isAdmin()
+        || isOwner()
+        || isEditorContentWrite()
+        || isViewerSelfClaim()
+        || isInviteSelfClaim()
+        || isHiddenForSelfToggle()
+        || isEditorSelfRemoval()
+      );
+
+      // ---------- video update helpers ----------
+      function isOwner() {
+        return resource.data.ownerUid == uid();
+      }
+
+      // Editors (coaches, shared editors) may edit CONTENT — including the
+      // cached aggregateStats — but never ACL fields or ownership.
+      function isEditorContentWrite() {
+        return uid() in resource.data.editorUids
+          && (request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['ownerUid', 'viewerUids', 'editorUids', 'accessUids', 'hiddenFor']) == false);
+      }
+
+      // "new == old union {me}" — the only change to the array is adding self.
+      function viewerAddedSelfOnly() {
+        return request.resource.data.viewerUids.toSet()
+            == resource.data.viewerUids.toSet().union([uid()].toSet());
+      }
+      function accessAddedSelfOnly() {
+        return request.resource.data.accessUids.toSet()
+            == resource.data.accessUids.toSet().union([uid()].toSet());
+      }
+      // hiddenFor may only lose the caller's own uid (un-hide on claim).
+      function hiddenForRemovedSelfOnly() {
+        return request.resource.data.get('hiddenFor', []).toSet()
+            == resource.data.get('hiddenFor', []).toSet().difference([uid()].toSet());
+      }
+
+      // Share-link claim: add self to viewer + access, and un-hide self.
+      function isViewerSelfClaim() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['viewerUids', 'accessUids', 'hiddenFor'])
+          && viewerAddedSelfOnly()
+          && accessAddedSelfOnly()
+          && hiddenForRemovedSelfOnly();
+      }
+
+      // Invite claim: viewer/access/un-hide AND fill an EMPTY player slot with
+      // self, leaving the other slot untouched.
+      function isInviteSelfClaim() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['viewerUids', 'accessUids', 'hiddenFor', 'playerConfig'])
+          && viewerAddedSelfOnly()
+          && accessAddedSelfOnly()
+          && hiddenForRemovedSelfOnly()
+          && filledEmptySlotWithSelf();
+      }
+
+      function filledEmptySlotWithSelf() {
+        let oldPC = resource.data.get('playerConfig', {});
+        let newPC = request.resource.data.get('playerConfig', {});
+        let oldP1 = oldPC.get('player_1', {});
+        let oldP2 = oldPC.get('player_2', {});
+        let newP1 = newPC.get('player_1', {});
+        let newP2 = newPC.get('player_2', {});
+        return
+          ( oldP1.get('uid', null) == null
+            && newP1.get('uid', null) == uid()
+            && newP2 == oldP2 )
+          ||
+          ( oldP2.get('uid', null) == null
+            && newP2.get('uid', null) == uid()
+            && newP1 == oldP1 );
+      }
+
+      // Per-user soft-delete: a user adds/removes ONLY their own uid to/from
+      // hiddenFor (hide a video from, or restore it to, their own list).
+      function isHiddenForSelfToggle() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenFor'])
+          && request.resource.data.get('hiddenFor', []).toSet()
+               .difference(resource.data.get('hiddenFor', []).toSet()).hasOnly([uid()])
+          && resource.data.get('hiddenFor', []).toSet()
+               .difference(request.resource.data.get('hiddenFor', []).toSet()).hasOnly([uid()]);
+      }
+
+      // A coach detaching from a student removes ONLY themselves from
+      // editorUids + accessUids on that student's video.
+      function isEditorSelfRemoval() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editorUids', 'accessUids'])
+          && request.resource.data.editorUids.toSet()
+               == resource.data.editorUids.toSet().difference([uid()].toSet())
+          && request.resource.data.accessUids.toSet()
+               == resource.data.accessUids.toSet().difference([uid()].toSet());
+      }
+    }
+
+    // Everything not matched above is denied by default (rules_version 2).
+  }
+}
