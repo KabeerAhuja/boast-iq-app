@@ -4710,6 +4710,83 @@ if (_clipParams) {
   renderClipViewer(_clipParams.videoKey, _clipParams.pointNumber);
 }
 
+// ---- Recipient-side NO-LOGIN match viewer (?matchview=PARENT_KEY) ----
+// A shared full match: plays every game via signed URLs from the public
+// /api/match-view endpoint. Requires NO sign-in and hijacks the page.
+const _matchViewKey = new URLSearchParams(window.location.search).get("matchview");
+if (_matchViewKey) {
+  document.body.style.overflow = "hidden";
+  const _lo = document.getElementById("login-overlay");
+  if (_lo) _lo.style.display = "none";
+  renderMatchViewer(_matchViewKey);
+}
+
+async function renderMatchViewer(parentKey) {
+  const API_BASE = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
+  const root = document.createElement("div");
+  root.id = "match-viewer-root";
+  root.style.cssText = "position:fixed;inset:0;overflow:auto;background:#0b0f14;color:#e6edf3;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
+  root.innerHTML = `
+    <div style="max-width:920px;margin:0 auto;padding:22px 16px 48px;">
+      <div style="font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:#58c4dc;font-weight:700;">BoastIQ · Shared match</div>
+      <h1 id="mv-title" style="margin:6px 0 4px;font-size:26px;font-weight:800;line-height:1.15;">Loading match…</h1>
+      <div id="mv-sub" style="color:#8b98a5;font-size:14px;margin-bottom:16px;"></div>
+      <div id="mv-tabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"></div>
+      <div id="mv-body"><div style="padding:40px;text-align:center;color:#8b98a5;">Loading…</div></div>
+      <div style="margin-top:28px;color:#6b7684;font-size:13px;text-align:center;">
+        Shared via <a href="${window.location.origin}/" style="color:#58c4dc;text-decoration:none;">BoastIQ</a> — no login needed.
+      </div>
+    </div>`;
+  document.body.appendChild(root);
+
+  const titleEl = root.querySelector("#mv-title");
+  const subEl   = root.querySelector("#mv-sub");
+  const tabsEl  = root.querySelector("#mv-tabs");
+  const bodyEl  = root.querySelector("#mv-body");
+
+  let data = null;
+  try {
+    const resp = await fetch(`${API_BASE}/api/match-view/${encodeURIComponent(parentKey)}`);
+    if (resp.ok) data = await resp.json();
+  } catch (e) { console.error("match-view fetch failed:", e); }
+
+  if (!data || data.status !== "ok" || !data.games || !data.games.length) {
+    titleEl.textContent = "Match not ready";
+    bodyEl.innerHTML = `<div style="padding:32px;text-align:center;color:#f0883e;">This match isn't ready to view yet (or the link is invalid). If it was just uploaded, check back in a few minutes.</div>`;
+    return;
+  }
+
+  titleEl.textContent = data.title || "Shared match";
+  subEl.textContent = `${data.games.length} game${data.games.length === 1 ? "" : "s"} · tracked replay`;
+
+  const video = document.createElement("video");
+  video.controls = true; video.playsInline = true; video.preload = "metadata";
+  video.style.cssText = "width:100%;border-radius:12px;background:#000;aspect-ratio:16/9;";
+
+  function selectGame(idx) {
+    video.src = data.games[idx].videoUrl;
+    video.load();
+    tabsEl.querySelectorAll("button").forEach((b, i) => {
+      const on = i === idx;
+      b.style.background = on ? "#58c4dc" : "rgba(255,255,255,0.08)";
+      b.style.color = on ? "#04121a" : "#e6edf3";
+    });
+  }
+
+  data.games.forEach((g, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = `Game ${g.gameIndex}`;
+    b.style.cssText = "padding:8px 16px;border:none;border-radius:999px;font-weight:700;font-size:14px;cursor:pointer;background:rgba(255,255,255,0.08);color:#e6edf3;";
+    b.addEventListener("click", () => selectGame(i));
+    tabsEl.appendChild(b);
+  });
+
+  bodyEl.innerHTML = "";
+  bodyEl.appendChild(video);
+  selectGame(0);
+}
+
 async function renderClipViewer(videoKey, pointNumber) {
   const root = document.createElement("div");
   root.className = "clip-viewer-root";
@@ -6306,7 +6383,9 @@ function buildShareUrl(videoKey) {
 // (parentKey__g1 … parentKey__gN) when they open it. `games` carries N so the
 // redeemer can derive the game keys without needing to read them first.
 function buildMatchShareUrl(parentKey, n) {
-  return `${window.location.origin}/?share=${encodeURIComponent(parentKey)}&games=${n}`;
+  // No-login share: recipient opens this and watches the match immediately —
+  // no Google sign-in, no account. Served by the standalone ?matchview viewer.
+  return `${window.location.origin}/?matchview=${encodeURIComponent(parentKey)}`;
 }
 
 async function handleShareLinkCopy() {
