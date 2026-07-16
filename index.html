@@ -3,6 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- Sentry browser error monitoring. Loaded first so load-time errors are caught.
+     The DSN is public by Sentry's design (safe to commit); paste the app project's
+     DSN below. Until replaced, the placeholder makes Sentry.init a no-op-ish call
+     that reports nowhere. -->
+<script src="https://browser.sentry-cdn.com/9.15.0/bundle.tracing.min.js" crossorigin="anonymous"></script>
+<script>
+  // Init only once a real DSN has been pasted in (the placeholder stays inert).
+  if (window.Sentry && "__SENTRY_APP_DSN__".indexOf("http") === 0) {
+    Sentry.init({
+      dsn: "__SENTRY_APP_DSN__",
+      environment: "production",
+      tracesSampleRate: 0.1,
+    });
+  }
+</script>
+
 <title>BoastIQ Player Tracker</title>
 <meta name="description" content="View your squash match on BoastIQ — AI-powered game recordings, insights, and stats.">
 
@@ -3712,6 +3729,10 @@
 </style>
 <!-- Stripe.js — powers the embedded card fields in the upgrade modal -->
 <script src="https://js.stripe.com/v3/"></script>
+<!-- Mixpanel product analytics (official CDN loader snippet) -->
+<script type="text/javascript">
+(function(f,b){if(!b.__SV){var e,g,i,h;window.mixpanel=b;b._i=[];b.init=function(e,f,c){function g(a,d){var b=d.split(".");2==b.length&&(a=a[b[0]],d=b[1]);a[d]=function(){a.push([d].concat(Array.prototype.slice.call(arguments,0)))}}var a=b;"undefined"!==typeof c?a=b[c]=[]:c="mixpanel";a.people=a.people||[];a.toString=function(a){var d="mixpanel";"mixpanel"!==c&&(d+="."+c);a||(d+=" (stub)");return d};a.people.toString=function(){return a.toString(1)+".people (stub)"};i="disable time_event track track_pageview track_links track_forms track_with_groups add_group set_group remove_group register register_once alias unregister identify name_tag set_config reset opt_in_tracking opt_out_tracking has_opted_in_tracking has_opted_out_tracking clear_opt_in_out_tracking start_batch_senders people.set people.set_once people.unset people.increment people.append people.union people.track_charge people.clear_charges people.delete_user people.remove".split(" ");for(h=0;h<i.length;h++)g(a,i[h]);var j="set set_once union unset remove delete".split(" ");a.get_group=function(){function b(c){d[c]=function(){call2_args=arguments;call2=[c].concat(Array.prototype.slice.call(call2_args,0));a.push([e,call2])}}for(var d={},e=["get_group"].concat(Array.prototype.slice.call(arguments,0)),c=0;c<j.length;c++)b(j[c]);return d};b._i.push([e,f,c])};b.__SV=1.2;e=f.createElement("script");e.type="text/javascript";e.async=!0;e.src="undefined"!==typeof MIXPANEL_CUSTOM_LIB_URL?MIXPANEL_CUSTOM_LIB_URL:"file:"===f.location.protocol&&"//cdn.mxpnl.com/libs/mixpanel-2-latest.min.js".match(/^\/\//)?"https://cdn.mxpnl.com/libs/mixpanel-2-latest.min.js":"//cdn.mxpnl.com/libs/mixpanel-2-latest.min.js";g=f.getElementsByTagName("script")[0];g.parentNode.insertBefore(e,g)}})(document,window.mixpanel||[]);
+</script>
 </head>
 <body>
 
@@ -3728,6 +3749,9 @@
   // Per-video deep link: each video is its own page at /?video=<key>. When set,
   // we boot straight into that video (fresh page = isolated state).
   window.__OPEN_VIDEO_KEY__ = __params.get('video') || null;
+  // Mixpanel project token (public/embeddable client-side token). Get it from
+  // mixpanel.com → Project Settings → Project Token. Analytics no-ops until set.
+  window.__MIXPANEL_TOKEN__ = 'PASTE_MIXPANEL_TOKEN_HERE';
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
   // Direct public download URL for the demo source video. Uses the Firebase Storage
   // download-token endpoint, which is a public capability URL: it bypasses the Storage
@@ -4662,6 +4686,7 @@ btnSignIn.addEventListener("click", async () => {
   btnSignIn.disabled = true;
   try {
     await signInWithPopup(fbAuth, googleProvider);
+    track("Signed In", { method: "google" });
   } catch (err) {
     console.error("Sign-in failed:", err);
     alert(`Sign-in failed: ${err.code || err.message}`);
@@ -4672,6 +4697,8 @@ btnSignIn.addEventListener("click", async () => {
 
 btnSignOut.addEventListener("click", async () => {
   setUserMenuOpen(false);
+  track("Signed Out");
+  if (mixpanelReady) { try { mixpanel.reset(); } catch (e) {} }
   try { await signOut(fbAuth); } catch (err) { console.error("Sign-out failed:", err); }
 });
 
@@ -4711,80 +4738,82 @@ if (_clipParams) {
 }
 
 // ---- Recipient-side NO-LOGIN match viewer (?matchview=PARENT_KEY) ----
-// A shared full match: plays every game via signed URLs from the public
-// /api/match-view endpoint. Requires NO sign-in and hijacks the page.
+// Opens the FULL stats page (heatmap, front-wall/floor-bounce, per-point clips,
+// match stats) read-only, with NO sign-in, by reusing the app's own results
+// view (openVideo) and feeding it signed URLs from the public /api/match-view.
 const _matchViewKey = new URLSearchParams(window.location.search).get("matchview");
 if (_matchViewKey) {
-  document.body.style.overflow = "hidden";
   const _lo = document.getElementById("login-overlay");
   if (_lo) _lo.style.display = "none";
   renderMatchViewer(_matchViewKey);
 }
 
+function _matchViewError(msg) {
+  const d = document.createElement("div");
+  d.style.cssText = "position:fixed;inset:0;z-index:100000;background:#0b0f14;color:#e6edf3;display:flex;align-items:center;justify-content:center;padding:32px;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
+  d.innerHTML = `<div><div style="font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:#58c4dc;font-weight:700;margin-bottom:10px;">BoastIQ · Shared match</div><div style="color:#f0883e;max-width:440px;font-size:15px;line-height:1.5;">${msg}</div></div>`;
+  document.body.appendChild(d);
+}
+
 async function renderMatchViewer(parentKey) {
   const API_BASE = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
-  const root = document.createElement("div");
-  root.id = "match-viewer-root";
-  root.style.cssText = "position:fixed;inset:0;overflow:auto;background:#0b0f14;color:#e6edf3;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
-  root.innerHTML = `
-    <div style="max-width:920px;margin:0 auto;padding:22px 16px 48px;">
-      <div style="font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:#58c4dc;font-weight:700;">BoastIQ · Shared match</div>
-      <h1 id="mv-title" style="margin:6px 0 4px;font-size:26px;font-weight:800;line-height:1.15;">Loading match…</h1>
-      <div id="mv-sub" style="color:#8b98a5;font-size:14px;margin-bottom:16px;"></div>
-      <div id="mv-tabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"></div>
-      <div id="mv-body"><div style="padding:40px;text-align:center;color:#8b98a5;">Loading…</div></div>
-      <div style="margin-top:28px;color:#6b7684;font-size:13px;text-align:center;">
-        Shared via <a href="${window.location.origin}/" style="color:#58c4dc;text-decoration:none;">BoastIQ</a> — no login needed.
-      </div>
-    </div>`;
-  document.body.appendChild(root);
-
-  const titleEl = root.querySelector("#mv-title");
-  const subEl   = root.querySelector("#mv-sub");
-  const tabsEl  = root.querySelector("#mv-tabs");
-  const bodyEl  = root.querySelector("#mv-body");
-
-  let data = null;
+  // The first await defers everything below past module load, so the globals
+  // openVideo() touches (videoKey, playerConfig, …) are initialised by then.
+  let mv = null;
   try {
     const resp = await fetch(`${API_BASE}/api/match-view/${encodeURIComponent(parentKey)}`);
-    if (resp.ok) data = await resp.json();
+    if (resp.ok) mv = await resp.json();
   } catch (e) { console.error("match-view fetch failed:", e); }
 
-  if (!data || data.status !== "ok" || !data.games || !data.games.length) {
-    titleEl.textContent = "Match not ready";
-    bodyEl.innerHTML = `<div style="padding:32px;text-align:center;color:#f0883e;">This match isn't ready to view yet (or the link is invalid). If it was just uploaded, check back in a few minutes.</div>`;
+  if (!mv || mv.status !== "ok" || !Array.isArray(mv.games) || !mv.games.length) {
+    _matchViewError("This match isn't ready to view yet, or the link is invalid. If it was just uploaded, check back in a few minutes.");
+    return;
+  }
+  // Only games whose stats have finished generating can render the stats page.
+  const statsGames = mv.games.filter((g) => g.hasStats);
+  if (!statsGames.length) {
+    _matchViewError("Stats for this match are still being generated — this usually finishes a few minutes after tracking. Check back shortly.");
     return;
   }
 
-  titleEl.textContent = data.title || "Shared match";
-  subEl.textContent = `${data.games.length} game${data.games.length === 1 ? "" : "s"} · tracked replay`;
-
-  const video = document.createElement("video");
-  video.controls = true; video.playsInline = true; video.preload = "metadata";
-  video.style.cssText = "width:100%;border-radius:12px;background:#000;aspect-ratio:16/9;";
-
-  function selectGame(idx) {
-    video.src = data.games[idx].videoUrl;
-    video.load();
-    tabsEl.querySelectorAll("button").forEach((b, i) => {
-      const on = i === idx;
-      b.style.background = on ? "#58c4dc" : "rgba(255,255,255,0.08)";
-      b.style.color = on ? "#04121a" : "#e6edf3";
-    });
-  }
-
-  data.games.forEach((g, i) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = `Game ${g.gameIndex}`;
-    b.style.cssText = "padding:8px 16px;border:none;border-radius:999px;font-weight:700;font-size:14px;cursor:pointer;background:rgba(255,255,255,0.08);color:#e6edf3;";
-    b.addEventListener("click", () => selectGame(i));
-    tabsEl.appendChild(b);
+  // Public chrome: hide signed-in-only header controls.
+  ["btn-manage-coach", "user-info", "btn-admin-coaches", "btn-admin-subs",
+   "btn-coach-dashboard", "btn-back-to-videos"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
   });
 
-  bodyEl.innerHTML = "";
-  bodyEl.appendChild(video);
-  selectGame(0);
+  const openGame = (g) => {
+    if (bar) bar.querySelectorAll("button").forEach((b) => {
+      const on = b.dataset.k === g.gameKey;
+      b.style.background = on ? "#58c4dc" : "rgba(255,255,255,0.10)";
+      b.style.color = on ? "#04121a" : "#e6edf3";
+    });
+    openVideo(g.gameKey, {
+      status: "complete",
+      parentVideoKey: parentKey,
+      _publicSourceUrl: mv.sourceVideoUrl,
+      title: mv.title,
+    });
+  };
+
+  // Floating game selector (only when the match has more than one stats game).
+  let bar = null;
+  if (statsGames.length > 1) {
+    bar = document.createElement("div");
+    bar.style.cssText = "position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:6000;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;background:rgba(10,14,20,0.92);border:1px solid rgba(255,255,255,0.12);padding:8px 12px;border-radius:999px;backdrop-filter:blur(8px);box-shadow:0 6px 24px rgba(0,0,0,0.4);";
+    statsGames.forEach((g) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.dataset.k = g.gameKey;
+      b.textContent = `Game ${g.gameIndex}`;
+      b.style.cssText = "padding:6px 14px;border:none;border-radius:999px;font-weight:700;font-size:13px;cursor:pointer;background:rgba(255,255,255,0.10);color:#e6edf3;";
+      b.addEventListener("click", () => openGame(g));
+      bar.appendChild(b);
+    });
+    document.body.appendChild(bar);
+  }
+
+  openGame(statsGames[0]);
 }
 
 async function renderClipViewer(videoKey, pointNumber) {
@@ -4884,6 +4913,7 @@ if (window.__IS_TRIAL__) {
 onAuthStateChanged(fbAuth, async (user) => {
   if (window.__IS_DEMO__) {
     console.log("[DEMO] skipping normal auth flow");
+    if (!window.__mpDemoTracked) { window.__mpDemoTracked = true; track("Demo Viewed"); }
     return;
   }
   if (window.__IS_TRIAL__) {
@@ -4906,11 +4936,14 @@ onAuthStateChanged(fbAuth, async (user) => {
       }, 100);
       return;
     }
+    if (!window.__mpTrialTracked) { window.__mpTrialTracked = true; track("Trial Started", { anonymous: true }); }
     showStep("upload");
     return;
   }
   console.log("[DEBUG] onAuthStateChanged fired. user:", user ? user.uid : "null");
   currentUser = user;
+  // Attach (or clear) the signed-in identity on Sentry events for attribution.
+  if (window.Sentry) Sentry.setUser(user ? { id: user.uid, email: user.email } : null);
   if (user) {
     console.log("[DEBUG] Signed in as", user.email, "uid:", user.uid);
     loginOverlay.classList.add("hidden");
@@ -4921,6 +4954,21 @@ onAuthStateChanged(fbAuth, async (user) => {
     await ensureUserDoc(user);
     await loadCurrentCoach();
     await refreshCurrentUserDoc();
+    // Mixpanel identity: tie all events to the Firebase uid (same distinct_id
+    // the backend uses), set profile traits, and register super properties that
+    // ride along on every event.
+    if (mixpanelReady) {
+      try {
+        mixpanel.identify(user.uid);
+        mixpanel.people.set({ $email: user.email || null, $name: user.displayName || null });
+        mixpanel.register({
+          is_admin: isAdminUser(user),
+          plan: currentUserDoc?.plan || null,
+          subscription_status: currentUserDoc?.subscriptionStatus || null,
+          videos_uploaded: currentUserDoc?.videosUploaded || 0,
+        });
+      } catch (e) { console.warn("[mixpanel] identify failed", e); }
+    }
     document.getElementById("btn-admin-coaches").style.display = isAdminUser(user) ? "inline-flex" : "none";
     document.getElementById("btn-admin-subs").style.display = isAdminUser(user) ? "inline-flex" : "none";
     document.getElementById("btn-coach-dashboard").style.display =
@@ -5054,6 +5102,29 @@ let gameVideoKeys = [];             // per-game video_keys spawned
 // Find your workspace name from `modal config show` or the Modal dashboard.
 // Format: https://<workspace>--boastiq-tracker-web.modal.run
 const API = "https://boast-iq-dev--boastiq-tracker-web.modal.run";
+
+// ---- Mixpanel analytics -------------------------------------------------
+// Single choke-point for all product events. Initializes only when a real
+// project token is present, so everything is a silent no-op until the
+// placeholder in window.__MIXPANEL_TOKEN__ is replaced.
+const MIXPANEL_TOKEN = window.__MIXPANEL_TOKEN__ || "";
+let mixpanelReady = false;
+if (MIXPANEL_TOKEN && MIXPANEL_TOKEN !== "PASTE_MIXPANEL_TOKEN_HERE") {
+  try {
+    mixpanel.init(MIXPANEL_TOKEN, { track_pageview: true, persistence: "localStorage", ignore_dnt: false });
+    mixpanelReady = true;
+    // Attribute landing-page origin from the boot flags (see head bootstrap).
+    const __src = window.__WANT_CHECKOUT__ ? "landing_checkout"
+                : window.__IS_TRIAL__ ? "landing_trial"
+                : window.__IS_DEMO__ ? "landing_demo" : "app";
+    mixpanel.register({ entry_source: __src });
+  } catch (e) { console.warn("[mixpanel] init failed", e); }
+}
+// track(event, props) — used everywhere; no-ops when Mixpanel isn't ready.
+function track(event, props) {
+  if (!mixpanelReady) return;
+  try { mixpanel.track(event, props || {}); } catch (e) {}
+}
 // Stripe publishable key (safe to expose). LAST setup step: replace with the
 // real pk_test_… / pk_live_… from the Stripe dashboard. The price + secret key
 // live only on the backend (Modal `stripe-secret`).
@@ -5683,12 +5754,15 @@ async function openVideo(key, data) {
     playerConfig = data.playerConfig;
   }
   // Only the video owner can mint player-tag invite links from the viewer.
+  // (No currentUser at all → public share view → never show it.)
   const shareBtn = document.getElementById("btn-dash-share");
-  if (shareBtn) shareBtn.style.display = (data.ownerUid === currentUser.uid) ? "inline-flex" : "none";
+  if (shareBtn) shareBtn.style.display = (data.ownerUid === currentUser?.uid) ? "inline-flex" : "none";
   try {
     // Multi-game jobs share one physical upload under the parent key.
     const srcKey = data.parentVideoKey || key;
-    videoBlobUrl = await getDownloadURL(ref(fbStorage, `uploaded-videos/${srcKey}.mp4`));
+    // Public share view supplies a pre-signed source URL (no Storage auth).
+    videoBlobUrl = data._publicSourceUrl
+      || await getDownloadURL(ref(fbStorage, `uploaded-videos/${srcKey}.mp4`));
   } catch (err) {
     console.warn("Source video URL fetch failed:", err);
     videoBlobUrl = null;
@@ -6112,6 +6186,7 @@ function showFreeUploadsLeft(remaining) {
   document.getElementById("free-uploads-msg").innerHTML =
     `You have <strong>${n}</strong> free video${n === 1 ? "" : "s"} left. Subscribe now for unlimited uploads.`;
   freeUploadsModal.style.display = "flex";
+  track("Free Upload Nudge Shown", { free_uploads_remaining: n });
 }
 function hideFreeUploadsModal() { freeUploadsModal.style.display = "none"; }
 document.getElementById("btn-free-uploads-dismiss").addEventListener("click", hideFreeUploadsModal);
@@ -6156,6 +6231,7 @@ async function handleApplyPromo() {
     }
     const data = await resp.json();
     _promoApplied = true;
+    track("Promo Applied", { no_card_required: !!data.noCardRequired });
     input.disabled = true;
     applyBtn.textContent = "Applied";
     if (data.noCardRequired) {
@@ -6237,6 +6313,7 @@ document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((btn) => {
 async function openUpgradeModal(plan) {
   if (!currentUser) { alert("Please sign in first."); return; }
   upgradeModal.style.display = "flex";
+  track("Paywall Opened", { plan: plan || null });
   if (typeof Stripe === "undefined") {
     upgradeMsg("Payment library failed to load. Check your connection and retry.", "error");
     return;
@@ -6280,6 +6357,7 @@ async function loadCheckoutForPlan(plan) {
       throw new Error(detail);
     }
     ({ clientSecret, mode: _upgradeMode, subscriptionId: _upgradeSubId } = await resp.json());
+    track("Checkout Loaded", { plan: _selectedPlan });
   } catch (err) {
     console.error("create-subscription failed:", err);
     upgradeMsg("Couldn't start checkout: " + (err.message || err) + ". Please try again.", "error");
@@ -6306,6 +6384,7 @@ async function loadCheckoutForPlan(plan) {
 async function handleUpgradeSubscribe() {
   if (!_stripe || _upgradeSubmitting) return;
   const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
+  track("Subscribe Submitted", { plan: _selectedPlan, no_card: !!_noCardRedeem });
 
   // No-card redemption: a fully-covering code was applied, so the subscription
   // (already created + trialing, with the 100%-off coupon attached) needs no
@@ -6316,7 +6395,7 @@ async function handleUpgradeSubscribe() {
     subscribeBtn.textContent = "Setting up…";
     const ok = await pollForActiveSub();
     _upgradeSubmitting = false;
-    if (ok) { closeUpgradeModal(); resumePendingUpload(); }
+    if (ok) { track("Subscribe Succeeded", { plan: _selectedPlan, no_card: true }); closeUpgradeModal(); resumePendingUpload(); }
     else { upgradeMsg("Almost there — activation is taking a moment. Refresh the page shortly.", "info"); subscribeBtn.disabled = false; }
     return;
   }
@@ -6350,6 +6429,7 @@ async function handleUpgradeSubscribe() {
   const activated = await pollForActiveSub();
   _upgradeSubmitting = false;
   if (activated) {
+    track("Subscribe Succeeded", { plan: _selectedPlan });
     closeUpgradeModal();
     resumePendingUpload();
   } else {
@@ -7251,6 +7331,7 @@ async function handleFile(file) {
   uploadPromise = (async () => {
     // is_new_upload flags THIS as the one create-job that consumes a free slot; the
     // per-game processing jobs spawned later for the same upload must not (they omit it).
+    track("Upload Started", { video_key: videoKey, file_size: file.size });
     const jobResp = await fetch(`${API}/api/create-job`, {
       method: "POST",
       headers: await authHeaders(),
@@ -7322,6 +7403,7 @@ async function handleFile(file) {
     }
     progFill.style.width = "100%";
     progText.textContent = "Upload complete.";
+    track("Upload Completed", { video_key: videoKey });
     await updateVideoStatus(videoKey, "ready");
 
     // Fire-and-forget: write the client-extracted first frame to GCS so the
@@ -7419,6 +7501,7 @@ function pickerSlot(n) {
 }
 
 function setPlayerPick(n, { uid, displayName, email, photoURL }) {
+  track("Player Selected", { slot: n, has_account: !!uid });
   const cfg = n === 1 ? playerConfig.player_1 : playerConfig.player_2;
   cfg.uid = uid || null;
   cfg.name = displayName || "";
@@ -7608,6 +7691,7 @@ async function createInviteForPlayer(n) {
     s.inviteInput.value = await mintPlayerInvite(n);
     s.invitePanel.style.display = "flex";
     s.inviteBtn.textContent = "Send invite link";
+    track("Invite Created", { slot: n, video_key: videoKey, context: "player_picker" });
   } catch (err) {
     console.error("createInvite failed:", err);
     alert(`Could not create invite: ${err.code || err.message}`);
@@ -7653,6 +7737,7 @@ async function createTagShareLink(slot) {
     document.getElementById("tag-share-for").textContent = playerLabel(slot);
     document.getElementById("tag-share-link-input").value = url;
     document.getElementById("tag-share-link-wrap").style.display = "block";
+    track("Share Link Created", { slot: slot, video_key: videoKey, context: "results" });
   } catch (err) {
     console.error("createTagShareLink failed:", err);
     msg.textContent = `Could not create invite: ${err.code || err.message}`;
@@ -8361,7 +8446,7 @@ async function startProcessing() {
 
   setPhaseProgress(0, 0.8, "Connecting…");
   const wsUrl = `${API.replace("http", "ws")}/ws/${jobId}`; ws = new WebSocket(wsUrl);
-  ws.onopen = () => { setPhaseProgress(0, 0.9, "Connected. Starting tracking…"); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: videoKey })); };
+  ws.onopen = () => { setPhaseProgress(0, 0.9, "Connected. Starting tracking…"); track("Tracking Started", { video_key: videoKey }); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: videoKey })); };
   ws.onmessage = (e) => handleWsMessage(JSON.parse(e.data));
   ws.onerror = () => updateOverallProgress(completedSrcFrames / totalSrcFrames * 100, "Connection error...");
   ws.onclose = () => {};
@@ -8399,6 +8484,7 @@ function handleWsMessage(msg) {
       activeProcessingKey = null;
       setPhaseProgress(1, 1, "Tracking players…");
       updateVideoStatus(videoKey, "complete");
+      track("Tracking Completed", { video_key: videoKey });
       waitForStatsThenShow(msg);
       break;
     case "error":
@@ -8422,8 +8508,9 @@ document.getElementById("btn-resume").addEventListener("click", () => { ws.send(
 document.getElementById("btn-skip").addEventListener("click", () => { ws.send(JSON.stringify({ type: "skip" })); document.getElementById("reprompt-section").style.display = "none"; });
 
 function showResults(msg) {
-  setTimeout(() => { 
-    showStep("results"); 
+  track("Results Viewed", { video_key: videoKey });
+  setTimeout(() => {
+    showStep("results");
     // processingStartTime is 0 when opening an already-processed video from My Videos.
     if (processingStartTime > 0) {
       const dur = ((Date.now() - processingStartTime) / 1000 / 60).toFixed(1);
