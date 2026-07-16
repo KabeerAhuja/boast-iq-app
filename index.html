@@ -3469,17 +3469,20 @@
     cursor: pointer;
   }
   .dash-viewer-controls {
-    display: flex; align-items: center; gap: 10px;
+    position: relative;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
     padding: 8px 16px 12px;
     flex-wrap: wrap;
   }
   .dash-viewer-controls .btn { padding: 8px 14px; font-size: 13px; }
   .dash-time {
-    margin-left: auto;
+    position: absolute; right: 16px;
     font-family: 'Space Grotesk', monospace;
     color: var(--text-dim); font-variant-numeric: tabular-nums;
     font-size: 13px;
   }
+  .dash-viewer-topbar { display: flex; margin-bottom: -4px; }
+  .dash-left .dash-meta { color: var(--text-dim); font-size: 13px; margin-top: -8px; }
 
   .dash-svg-host { display: block; }
   .dash-svg-host svg { display: block; margin: 0 auto; }
@@ -4426,25 +4429,19 @@
 
   <!-- Step 5: Results -->
   <div id="step-results" class="step">
-    <div class="dash-header">
-      <div>
-        <div class="step-label">Complete</div>
-        <div class="dash-title" id="results-summary"></div>
-      </div>
-      <div class="dash-header-right">
-        <button class="btn btn-primary dash-share-btn" id="btn-dash-share" title="Invite a player to tag themselves">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-          </svg>
-          Share
-        </button>
-        <div class="dash-meta">Point <span id="dash-point-cur">–</span> of <span id="dash-point-total">–</span> · <kbd>←</kbd><kbd>→</kbd> nav · <kbd>space</kbd> play</div>
-      </div>
-    </div>
+    <span id="results-summary" hidden></span>
 
     <div class="dashboard">
       <div class="dash-left">
+        <div class="dash-viewer-topbar">
+          <button class="btn btn-primary dash-share-btn" id="btn-dash-share" title="Invite a player to tag themselves">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            Share
+          </button>
+        </div>
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
             <video id="pv-video" playsinline webkit-playsinline preload="metadata"></video>
@@ -4474,6 +4471,8 @@
             <div class="dash-time"><span id="dash-time-cur">0:00</span> / <span id="dash-time-total">0:00</span></div>
           </div>
         </div>
+
+        <div class="dash-meta">Point <span id="dash-point-cur">–</span> of <span id="dash-point-total">–</span> · <kbd>←</kbd><kbd>→</kbd> nav · <kbd>space</kbd> play</div>
 
         <div class="dash-panel dash-stats-panel">
           <div class="dash-panel-h">
@@ -8975,10 +8974,6 @@ function showResults(msg) {
         card('Total shots', one(s.totalShots)),
         card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
         card('Distance', dual(s.distP1, s.distP2)),
-        card('Drives', dual(s.drives.p1, s.drives.p2)),
-        card('Drops', dual(s.drops.p1, s.drops.p2)),
-        card('Boasts', dual(s.boasts.p1, s.boasts.p2)),
-        card('Volleys', dual(s.volleys.p1, s.volleys.p2)),
       ].join('')}</div>`;
     }
 
