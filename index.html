@@ -3481,7 +3481,6 @@
     color: var(--text-dim); font-variant-numeric: tabular-nums;
     font-size: 13px;
   }
-  .dash-viewer-topbar { display: flex; margin-bottom: -4px; }
   .dash-left .dash-meta { color: var(--text-dim); font-size: 13px; margin-top: -8px; }
 
   .dash-svg-host { display: block; }
@@ -4433,15 +4432,6 @@
 
     <div class="dashboard">
       <div class="dash-left">
-        <div class="dash-viewer-topbar">
-          <button class="btn btn-primary dash-share-btn" id="btn-dash-share" title="Invite a player to tag themselves">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle>
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-            </svg>
-            Share
-          </button>
-        </div>
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
             <video id="pv-video" playsinline webkit-playsinline preload="metadata"></video>
@@ -4465,6 +4455,13 @@
             <input type="range" id="dash-scrub" class="dash-scrub" min="0" max="1" step="0.01" value="0" aria-label="Scrub through point">
           </div>
           <div class="dash-viewer-controls">
+            <button class="btn btn-primary dash-share-btn" id="btn-dash-share" title="Invite a player to tag themselves">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+              </svg>
+              Share
+            </button>
             <button class="btn btn-secondary" id="pv-prev"><span>←</span> Prev</button>
             <button class="btn btn-primary" id="pv-play">▶ Play</button>
             <button class="btn btn-secondary" id="pv-next">Next <span>→</span></button>
@@ -8768,23 +8765,56 @@ function showResults(msg) {
         </svg>`;
     }
 
+    // Map an absolute video time to a fractional index into a point's movement
+    // track. Prefers the backend per-sample time array (m.t) so the live dot
+    // stays locked to real playback time. The samples are NOT exactly 0.2s
+    // apart (source video is often variable-fps), so the old fixed-5Hz
+    // assumption made the dot drift ahead over a rally and then freeze at the
+    // last sample. Falls back to a self-calibrated interval (duration/samples)
+    // for older points saved before `t` existed.
+    function movTIdxF(pt, videoTime) {
+      const m = pt && pt.movement;
+      if (!m) return 0;
+      const t = m.t;
+      if (Array.isArray(t) && t.length) {
+        if (videoTime <= t[0]) return 0;
+        if (videoTime >= t[t.length - 1]) return t.length - 1;
+        let lo = 0, hi = t.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (t[mid] <= videoTime) lo = mid; else hi = mid - 1;
+        }
+        const span = t[lo + 1] - t[lo];
+        const frac = span > 1e-6 ? (videoTime - t[lo]) / span : 0;
+        return lo + Math.max(0, Math.min(1, frac));
+      }
+      // Legacy fallback: no per-sample times. Self-calibrate the interval from
+      // the point duration and sample count instead of hardcoding 5 Hz.
+      const origin = (m.start_sec != null) ? m.start_sec : (dashState.currentPointStart || 0);
+      const nSamp = m.samples || (m.player_1 && m.player_1.x ? m.player_1.x.length : 0);
+      const dur = pt.duration_sec || 0;
+      const dt = (nSamp > 1 && dur > 0) ? dur / (nSamp - 1) : 0.2;
+      return Math.max(0, (videoTime - origin) / dt);
+    }
+
     function renderDashHeatmap() {
       const host = document.getElementById('dash-heatmap-svg');
       if (!host) return;
       const pt = dashState.currentPointData;
-      const tInPoint = Math.max(0, pvVideo.currentTime - (dashState.currentPointStart || 0));
       if (!pt) { host.innerHTML = courtShellSvg(dashState.showEgg ? eggPathSvg() : ''); return; }
 
       const SAMPLE_HZ = 5;
       const HEAT_STRIDE = 2;
       const TRAIL_SEC = 0.5;
+      // Single time→sample mapping shared by the blobs and the live dot, so
+      // they never disagree about where "now" is.
+      const tIdxF = movTIdxF(pt, pvVideo.currentTime);
 
       function blobsFor(player, gradId) {
         if (!dashState.filter[player === 'player_1' ? 'p1' : 'p2']) return '';
         const m = pt.movement && pt.movement[player];
         if (!m || !Array.isArray(m.x) || !Array.isArray(m.y)) return '';
         const n = Math.min(m.x.length, m.y.length);
-        const tIdxF = tInPoint * SAMPLE_HZ;
         const cutoff = Math.min(n - 1, Math.floor(tIdxF));
         const frac = Math.max(0, Math.min(1, tIdxF - Math.floor(tIdxF)));
         let out = '';
@@ -8807,7 +8837,6 @@ function showResults(msg) {
         const m = pt.movement && pt.movement[player];
         if (!m || !Array.isArray(m.x) || !Array.isArray(m.y)) return '';
         const n = Math.min(m.x.length, m.y.length);
-        const tIdxF = tInPoint * SAMPLE_HZ;
         const head = Math.min(n - 1, Math.floor(tIdxF));
         const frac = Math.max(0, Math.min(1, tIdxF - Math.floor(tIdxF)));
         const startIdx = Math.max(0, head - Math.floor(TRAIL_SEC * SAMPLE_HZ));
