@@ -4052,8 +4052,8 @@
         <button type="button" class="plan-toggle-btn active" data-plan="monthly" role="tab">Monthly</button>
         <button type="button" class="plan-toggle-btn" data-plan="annual" role="tab">Yearly <span class="plan-save">Save $120</span></button>
       </div>
-      <div class="upgrade-price"><span class="upgrade-trial-tag">7 days free</span>, then <span id="upgrade-price-amount"></span></div>
-      <div class="upgrade-blurb">Unlock unlimited match uploads and full automated analysis. Your card won't be charged until the trial ends — cancel anytime before then.</div>
+      <div class="upgrade-price"><span id="upgrade-price-amount"></span></div>
+      <div class="upgrade-blurb">Unlock unlimited match uploads and full automated analysis. Cancel anytime.</div>
       <ul class="upgrade-features">
         <li>Unlimited video uploads &amp; tracking</li>
         <li>Full shot, rally &amp; heatmap stats</li>
@@ -4717,7 +4717,7 @@ if (pendingInviteOnLoad) {
     "You've been invited to be coached. Sign in with Google to accept.";
 } else if (window.__WANT_CHECKOUT__) {
   document.getElementById("login-desc").textContent =
-    "Sign in with Google to start your 7-day free trial.";
+    "Sign in with Google to subscribe and upload unlimited matches.";
 }
 
 // ---- Recipient-side clip viewer (?clip=KEY&point=N) ----
@@ -5145,7 +5145,7 @@ function hasActiveSub() {
 // FREE_UPLOAD_LIMIT in Modal_app.py — the backend is the source of truth; this is
 // only for pre-upload UX (block/nudge). `videosUploaded` is a monotonic counter on
 // users/{uid} written server-side at /api/create-job.
-const FREE_UPLOAD_LIMIT = 3;
+const FREE_UPLOAD_LIMIT = 4;
 function freeUploadsRemaining() {
   if (hasActiveSub()) return Infinity;
   return Math.max(0, FREE_UPLOAD_LIMIT - (currentUserDoc?.videosUploaded || 0));
@@ -6211,46 +6211,38 @@ function promoMsg(text, kind) {
 }
 
 async function handleApplyPromo() {
-  if (_promoApplied) return;
+  if (_promoApplied || _upgradeSubmitting) return;
   const input = document.getElementById("upgrade-promo-input");
   const applyBtn = document.getElementById("btn-apply-promo");
   const code = (input.value || "").trim();
   if (!code) { promoMsg("Enter a code first.", "error"); return; }
-  if (!_upgradeSubId) { promoMsg("Please wait for checkout to finish loading.", "error"); return; }
   applyBtn.disabled = true;
   promoMsg("Checking…", "success");
   try {
-    const resp = await fetch(`${API}/api/apply-promo`, {
-      method: "POST",
-      headers: await authHeaders(),
-      body: JSON.stringify({ subscriptionId: _upgradeSubId, code }),
-    });
-    if (!resp.ok) {
-      const detail = (await resp.json().catch(() => ({}))).detail || "";
-      throw new Error(detail.startsWith("invalid_promo") ? "That code isn't valid." : "Couldn't apply that code.");
-    }
-    const data = await resp.json();
+    // Re-create the subscription with the code attached so the immediate charge
+    // reflects the discount (a discount added after creation would not reduce it).
+    const data = await loadCheckoutForPlan(_selectedPlan, code);
+    if (!data) { applyBtn.disabled = false; return; }  // already-active/redirect handled
     _promoApplied = true;
     track("Promo Applied", { no_card_required: !!data.noCardRequired });
     input.disabled = true;
     applyBtn.textContent = "Applied";
     if (data.noCardRequired) {
-      // Code fully covers the plan → drop card collection entirely.
-      _noCardRedeem = true;
-      const label = data.freeLabel || "free";
-      promoMsg(`🎉 Code applied — ${label}, no credit card required.`, "success");
-      // Hide the Stripe card fields and switch the button to a plain redeem.
-      const payEl = document.getElementById("upgrade-payment-element");
-      if (payEl) payEl.style.display = "none";
-      const subBtn = document.getElementById("btn-upgrade-subscribe");
-      subBtn.disabled = false;
-      subBtn.textContent = `Start using BoastIQ — ${label}`;
+      promoMsg(`🎉 Code applied — ${data.freeLabel || "free"}, no credit card required.`, "success");
     } else {
       const dollars = (data.newMonthlyCents / 100).toFixed(0);
-      promoMsg(`✓ Code applied — $${dollars}/month after your trial.`, "success");
+      promoMsg(`✓ Code applied — you'll be charged $${dollars} now.`, "success");
     }
   } catch (err) {
-    promoMsg(err.message || "Couldn't apply that code.", "error");
+    // Invalid code: revert the checkout to the normal (full-price) subscription.
+    const msg = String(err.detail || "").startsWith("invalid_promo")
+      ? "That code isn't valid." : "Couldn't apply that code.";
+    _promoApplied = false;
+    await loadCheckoutForPlan(_selectedPlan);   // rebuild full-price checkout
+    document.getElementById("upgrade-promo-row").style.display = "flex";
+    document.getElementById("upgrade-promo-toggle").hidden = true;
+    input.value = code;
+    promoMsg(msg, "error");
     applyBtn.disabled = false;
   }
 }
@@ -6324,49 +6316,73 @@ async function openUpgradeModal(plan) {
 }
 
 // Create (or re-create) the subscription for `plan` and mount its Payment Element.
-// Called on modal open and whenever the billing-period toggle changes.
-async function loadCheckoutForPlan(plan) {
+// Called on modal open, on billing-period toggle, and when a promo code is
+// applied (`promoCode` is attached at creation so the charge reflects the
+// discount — a discount added after the first invoice is finalized would not).
+// Returns the parsed response (or null on error) so the promo handler can react.
+async function loadCheckoutForPlan(plan, promoCode) {
   _selectedPlan = (plan === "annual" || plan === "yearly") ? "annual" : "monthly";
   updatePlanToggleUI();
   clearUpgradeMsg();
-  resetPromoUI();
+  if (!promoCode) resetPromoUI();   // keep the promo UI when re-loading for a code
+  _noCardRedeem = false;
   const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
   subscribeBtn.disabled = true;
-  subscribeBtn.textContent = "Start 7-day free trial";
+  subscribeBtn.textContent = "Subscribe";
   _upgradeElements = null;
-  document.getElementById("upgrade-payment-element").innerHTML = "";
+  const payEl = document.getElementById("upgrade-payment-element");
+  payEl.style.display = "";
+  payEl.innerHTML = "";
   document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = true));
 
   upgradeMsg("Setting up secure checkout…", "info");
-  let clientSecret;
+  let data;
   try {
+    const body = { plan: _selectedPlan };
+    if (promoCode) body.promoCode = promoCode;
     const resp = await fetch(`${API}/api/create-subscription`, {
       method: "POST",
       headers: await authHeaders(),
-      body: JSON.stringify({ plan: _selectedPlan }),
+      body: JSON.stringify(body),
     });
     if (resp.status === 409) {
       // Already subscribed — just refresh local state and proceed.
       await refreshCurrentUserDoc();
       closeUpgradeModal();
       if (hasActiveSub()) resumePendingUpload();
-      return;
+      return null;
     }
     if (!resp.ok) {
-      const detail = (await resp.json().catch(() => ({}))).detail || resp.status;
-      throw new Error(detail);
+      const detail = (await resp.json().catch(() => ({}))).detail || String(resp.status);
+      const err = new Error(detail); err.detail = detail; throw err;
     }
-    ({ clientSecret, mode: _upgradeMode, subscriptionId: _upgradeSubId } = await resp.json());
-    track("Checkout Loaded", { plan: _selectedPlan });
+    data = await resp.json();
+    _upgradeMode = data.mode;
+    _upgradeSubId = data.subscriptionId;
+    track("Checkout Loaded", { plan: _selectedPlan, promo: !!promoCode });
   } catch (err) {
     console.error("create-subscription failed:", err);
-    upgradeMsg("Couldn't start checkout: " + (err.message || err) + ". Please try again.", "error");
     document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = false));
-    return;
+    if (promoCode && String(err.detail || "").startsWith("invalid_promo")) {
+      throw err;  // let the promo handler show a targeted message
+    }
+    upgradeMsg("Couldn't start checkout: " + (err.message || err) + ". Please try again.", "error");
+    return null;
+  }
+
+  // Fully-covered by a 100%-off code → no card needed.
+  if (data.mode === "free") {
+    _noCardRedeem = true;
+    payEl.style.display = "none";
+    clearUpgradeMsg();
+    subscribeBtn.disabled = false;
+    subscribeBtn.textContent = `Start using BoastIQ — ${data.freeLabel || "free"}`;
+    document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = false));
+    return data;
   }
 
   try {
-    _upgradeElements = _stripe.elements({ clientSecret, appearance: { theme: "night" } });
+    _upgradeElements = _stripe.elements({ clientSecret: data.clientSecret, appearance: { theme: "night" } });
     const paymentEl = _upgradeElements.create("payment");
     paymentEl.mount("#upgrade-payment-element");
     paymentEl.on("ready", () => {
@@ -6379,6 +6395,7 @@ async function loadCheckoutForPlan(plan) {
     upgradeMsg("Couldn't load the payment form. Please try again.", "error");
     document.querySelectorAll("#plan-toggle .plan-toggle-btn").forEach((b) => (b.disabled = false));
   }
+  return data;
 }
 
 async function handleUpgradeSubscribe() {
@@ -6386,9 +6403,8 @@ async function handleUpgradeSubscribe() {
   const subscribeBtn = document.getElementById("btn-upgrade-subscribe");
   track("Subscribe Submitted", { plan: _selectedPlan, no_card: !!_noCardRedeem });
 
-  // No-card redemption: a fully-covering code was applied, so the subscription
-  // (already created + trialing, with the 100%-off coupon attached) needs no
-  // card. Just wait for access and go.
+  // No-card redemption: a fully-covering (100%-off) code was applied, so the
+  // subscription is already active with no charge. Just wait for access and go.
   if (_noCardRedeem) {
     _upgradeSubmitting = true;
     subscribeBtn.disabled = true;
@@ -6406,26 +6422,22 @@ async function handleUpgradeSubscribe() {
   subscribeBtn.textContent = "Processing…";
   clearUpgradeMsg();
 
-  // Trial subscriptions have a $0 first invoice, so we save the card via a
-  // SetupIntent (confirmSetup); a trial-less subscription confirms the first
-  // charge instead (confirmPayment).
+  // No trial — the first invoice is charged immediately via the PaymentIntent.
   const confirmParams = { return_url: window.location.href };
-  const { error } = _upgradeMode === "setup"
-    ? await _stripe.confirmSetup({ elements: _upgradeElements, confirmParams, redirect: "if_required" })
-    : await _stripe.confirmPayment({ elements: _upgradeElements, confirmParams, redirect: "if_required" });
+  const { error } = await _stripe.confirmPayment({
+    elements: _upgradeElements, confirmParams, redirect: "if_required" });
 
   if (error) {
     console.warn("confirm error:", error);
-    upgradeMsg(error.message || "We couldn't verify your card. Please check the details and try again.", "error");
+    upgradeMsg(error.message || "We couldn't process that card. Please check the details and try again.", "error");
     subscribeBtn.disabled = false;
-    subscribeBtn.textContent = "Start 7-day free trial";
+    subscribeBtn.textContent = "Subscribe";
     _upgradeSubmitting = false;
     return;
   }
 
-  // Card confirmed in-page. Wait for the Stripe webhook to flip Firestore state
-  // to `trialing` (access granted immediately; first charge is in 7 days).
-  upgradeMsg("Card saved — starting your free trial…", "success");
+  // Payment confirmed in-page. Wait for the webhook to flip Firestore to active.
+  upgradeMsg("Payment received — activating your subscription…", "success");
   const activated = await pollForActiveSub();
   _upgradeSubmitting = false;
   if (activated) {
@@ -6433,8 +6445,8 @@ async function handleUpgradeSubscribe() {
     closeUpgradeModal();
     resumePendingUpload();
   } else {
-    upgradeMsg("Your card was saved, but activation is taking a moment. Refresh the page shortly — you won't be charged during the trial.", "info");
-    subscribeBtn.textContent = "Start 7-day free trial";
+    upgradeMsg("Payment received — activation is taking a moment. Refresh the page shortly.", "info");
+    subscribeBtn.textContent = "Subscribe";
   }
 }
 
