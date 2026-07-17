@@ -6892,7 +6892,7 @@ async function uploadThumbnail(key, sourceCanvas) {
 // if the point count changed (video was re-processed) the rally cache is
 // dropped so stale rallies can't linger.
 const STATS_CACHE_PREFIX = "boastiq_stats_";
-const STATS_CACHE_VERSION = 2;
+const STATS_CACHE_VERSION = 3;
 const _inflightPrefetch = new Set();
 
 function _statsCacheKey(key) { return STATS_CACHE_PREFIX + key; }
@@ -8988,6 +8988,13 @@ function showResults(msg) {
       if (scope === 'point') {
         s = buildPointStats(dashState.currentPointData);
         if (!s) { body.innerHTML = `<div class="dash-loading">Loading point stats…</div>`; return; }
+        // Attach this point's own movement stats (from the backend per-point breakdown).
+        const mp = (dashState.movementPerPoint || []).find(e => e && e.point_number == dashState.currentPointNum);
+        if (mp) {
+          s.pressureP1 = mp.pressureP1; s.pressureP2 = mp.pressureP2;
+          s.eggTimeP1 = mp.eggTimeP1;   s.eggTimeP2 = mp.eggTimeP2;
+          s.recoveryP1 = mp.recoveryP1; s.recoveryP2 = mp.recoveryP2;
+        }
       } else {
         if (!dashState.matchAggregates) { body.innerHTML = `<div class="dash-loading">Aggregating match stats…</div>`; return; }
         s = dashState.matchAggregates;
@@ -9036,6 +9043,9 @@ function showResults(msg) {
         const totalPoints = indexData.total_points || 0;
         document.getElementById('dash-point-total').textContent = totalPoints || '–';
         if (totalPoints === 0) return;
+
+        // Per-point movement stats for the Current-point tab (backend match_summary).
+        dashState.movementPerPoint = (indexData.match_summary || {}).movementPerPoint || [];
 
         dashState.p1Name = resolvePlayerName(1, indexData.player_1?.name);
         dashState.p2Name = resolvePlayerName(2, indexData.player_2?.name);
