@@ -8993,7 +8993,10 @@ function showResults(msg) {
       floorHost.innerHTML = courtShellSvg(floorParts.join(''));
     }
 
-    function renderDashAll() { renderDashHeatmap(); renderDashShots(); }
+    function renderDashAll() {
+      try { renderDashHeatmap(); } catch (e) { console.warn('heatmap render failed', e); }
+      try { renderDashShots(); } catch (e) { console.warn('shots render failed', e); }
+    }
     function scheduleDashRender() {
       if (dashState.rafPending) return;
       dashState.rafPending = true;
@@ -9004,10 +9007,14 @@ function showResults(msg) {
     // ticking only on the ~4Hz `timeupdate` event.
     let dashRafId = null;
     function dashTick() {
-      renderDashHeatmap();
+      // Never let a single bad render kill the loop — always schedule the next
+      // frame, so the heatmap can't freeze mid-playback on a transient error.
+      try { renderDashHeatmap(); } catch (e) { console.warn('heatmap render failed', e); }
       dashRafId = requestAnimationFrame(dashTick);
     }
-    function startDashLoop() { if (dashRafId == null) dashRafId = requestAnimationFrame(dashTick); }
+    // Cancel any existing (possibly stale) frame first so the loop always
+    // restarts cleanly — the old `if (dashRafId == null)` guard could get stuck.
+    function startDashLoop() { stopDashLoop(); dashRafId = requestAnimationFrame(dashTick); }
     function stopDashLoop() { if (dashRafId != null) { cancelAnimationFrame(dashRafId); dashRafId = null; } }
 
     function buildPointStats(pt) {
@@ -10336,6 +10343,9 @@ function showResults(msg) {
     }
     
     pvVideo.addEventListener("play", () => { pvPlay.innerHTML = "⏸ Pause"; startDashLoop(); });
+    // 'playing' fires on resume after buffering/stalls (long videos) where 'play'
+    // may not — keep the heatmap loop alive whenever playback is actually running.
+    pvVideo.addEventListener("playing", () => { if (!pvVideo.paused) startDashLoop(); });
     pvVideo.addEventListener("pause", () => { pvPlay.innerHTML = "▶ Play"; stopDashLoop(); renderDashAll(); });
     pvVideo.addEventListener("seeking", () => { renderDashAll(); });
     pvVideo.addEventListener("timeupdate", () => {
