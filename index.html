@@ -7519,7 +7519,7 @@ async function handleFile(file) {
     preparePromise.then((r) => {
       // Metadata is back from the server right after upload. If the source carried
       // no recording date, ask the user for it so the activity calendar is accurate.
-      if (r && r.capture_date_known === false) promptCaptureDate(videoKey);
+      if (r) maybePromptCaptureDate(videoKey, r);
     });
     preparePromise.catch((err) => {
       console.warn("Background /api/prepare failed:", err);
@@ -7877,42 +7877,9 @@ document.getElementById("btn-continue-config").addEventListener("click", async (
   initMarkGames();
   showStep("markGames");
 });
-// Build the camera/EXIF readout spans from the extracted metadata. Every field
-// the user asked for is shown; ones the video container didn't carry (aperture /
-// exposure / ISO are usually absent on phone video) read "Not recorded".
-function cameraMetaSpans(meta) {
-  const NR = "Not recorded";
-  const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-  // Capture date (captureDate string "YYYY-MM-DD" → locale date).
-  let dateStr = NR;
-  if (meta.capture_date) {
-    const d = new Date(meta.capture_date + "T12:00:00");
-    dateStr = isNaN(d) ? meta.capture_date : d.toLocaleDateString();
-  }
-  const camera = meta.camera_model || meta.camera_make || NR;
-  let lens = NR;
-  if (meta.lens_type || meta.focal_length) {
-    const parts = [];
-    if (meta.lens_type) parts.push(cap(meta.lens_type));
-    if (meta.focal_length) parts.push(`${meta.focal_length}mm`);
-    lens = parts.join(" · ");
-  }
-  const aperture = meta.f_number ? `ƒ/${meta.f_number}` : NR;
-  let exposure = NR;
-  if (meta.exposure_time) {
-    exposure = meta.exposure_time < 1
-      ? `1/${Math.round(1 / meta.exposure_time)}s`
-      : `${meta.exposure_time}s`;
-  }
-  const iso = meta.iso ? `ISO ${meta.iso}` : NR;
-  return [
-    `📅 ${dateStr}`, `📷 ${camera}`, `🔎 ${lens}`,
-    `Aperture ${aperture}`, `Exposure ${exposure}`, iso,
-  ].map((t) => `<span>${t}</span>`).join("");
-}
 function setupFrameSelection(meta) {
   document.getElementById("player-names-display").innerHTML = `<span class="p1-name">${playerConfig.player_1.name} (${playerConfig.player_1.handedness[0].toUpperCase()})</span><span class="p2-name">${playerConfig.player_2.name} (${playerConfig.player_2.handedness[0].toUpperCase()})</span>`;
-  document.getElementById("video-meta").innerHTML = `<span>${meta.src_width}×${meta.src_height}</span><span>${meta.src_fps} fps</span><span>${meta.duration_sec}s</span>` + cameraMetaSpans(meta);
+  document.getElementById("video-meta").innerHTML = `<span>${meta.src_width}×${meta.src_height}</span><span>${meta.src_fps} fps</span><span>${meta.duration_sec}s</span>`;
   const canvas = document.getElementById("frame-canvas"), ctx = canvas.getContext("2d");
   frameImage = new Image();
   frameImage.onload = () => { canvas.width = frameImage.width; canvas.height = frameImage.height; drawFrame(ctx, frameImage); };
@@ -8529,6 +8496,11 @@ async function startProcessing() {
     }
   }
   totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+
+  // Backstop: if the source had no recording date and we haven't already asked
+  // (e.g. a video opened straight from My Videos never ran the post-upload hook),
+  // prompt for it now so it still lands on the right calendar day. Non-blocking.
+  maybePromptCaptureDate(videoKey, videoMeta);
 
   setPhaseProgress(0, 0.8, "Connecting…");
   const wsUrl = `${API.replace("http", "ws")}/ws/${jobId}`; ws = new WebSocket(wsUrl);
@@ -11785,9 +11757,17 @@ function navigateToDayVideos(ymd) {
 // undated videos.
 let captureDateTargetKey = null;
 const captureDateModal = document.getElementById("capture-date-modal");
+// Auto-prompts (right after upload / at tracking start) should fire at most once
+// per video per session, so skipping isn't undone by a later backstop check. The
+// manual "Set date" affordance bypasses this and can always re-open the prompt.
+const autoPromptedCaptureKeys = new Set();
 
-function promptCaptureDate(videoKey) {
+function promptCaptureDate(videoKey, isAuto) {
   if (!videoKey || !currentUser) return;
+  if (isAuto) {
+    if (autoPromptedCaptureKeys.has(videoKey)) return;
+    autoPromptedCaptureKeys.add(videoKey);
+  }
   captureDateTargetKey = videoKey;
   const input = document.getElementById("capture-date-input");
   try { input.valueAsDate = new Date(); } catch (e) { input.value = ""; }
@@ -11796,6 +11776,23 @@ function promptCaptureDate(videoKey) {
   msg.style.display = "none";
   captureDateModal.style.display = "flex";
   setTimeout(() => { try { input.focus(); } catch (e) {} }, 30);
+}
+
+// Prompt for the capture date when we couldn't determine one. `meta` is the
+// prepare sidecar / videoMeta. If the local metadata doesn't confirm a known date
+// we consult the authoritative Firestore doc before prompting, so a video that
+// already has a date (from metadata or a previous manual entry) is never asked
+// again — this also covers absent fields on reopened videos.
+async function maybePromptCaptureDate(videoKey, meta) {
+  if (!videoKey || !currentUser) return;
+  if (meta && meta.capture_date_known === true) return;
+  if (autoPromptedCaptureKeys.has(videoKey)) return;
+  try {
+    const snap = await getDoc(doc(fbFirestore, "videos", videoKey));
+    const d = snap.exists() ? snap.data() : {};
+    if (d.captureDate || d.captureDateKnown === true) return;  // already dated
+  } catch (e) { /* fall through and prompt */ }
+  promptCaptureDate(videoKey, true);
 }
 
 function closeCaptureDateModal() {
