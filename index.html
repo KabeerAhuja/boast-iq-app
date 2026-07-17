@@ -6892,7 +6892,7 @@ async function uploadThumbnail(key, sourceCanvas) {
 // if the point count changed (video was re-processed) the rally cache is
 // dropped so stale rallies can't linger.
 const STATS_CACHE_PREFIX = "boastiq_stats_";
-const STATS_CACHE_VERSION = 1;
+const STATS_CACHE_VERSION = 2;
 const _inflightPrefetch = new Set();
 
 function _statsCacheKey(key) { return STATS_CACHE_PREFIX + key; }
@@ -9083,6 +9083,14 @@ function showResults(msg) {
           drops:   { p1: cls.p1.drop,   p2: cls.p2.drop },
           boasts:  { p1: cls.p1.boast,  p2: cls.p2.boast },
           volleys: { p1: cls.p1.volley, p2: cls.p2.volley },
+          // Movement stats (Pressure / Egg time / Recovery) come from the backend
+          // match_summary (pipeline-computed / backfilled) — not recomputed here.
+          pressureP1: (indexData.match_summary || {}).pressureP1,
+          pressureP2: (indexData.match_summary || {}).pressureP2,
+          eggTimeP1:  (indexData.match_summary || {}).eggTimeP1,
+          eggTimeP2:  (indexData.match_summary || {}).eggTimeP2,
+          recoveryP1: (indexData.match_summary || {}).recoveryP1,
+          recoveryP2: (indexData.match_summary || {}).recoveryP2,
         };
         if (dashState.scope === 'match') renderStatsPanel('match');
 
