@@ -9046,6 +9046,9 @@ function showResults(msg) {
 
         // Per-point movement stats for the Current-point tab (backend match_summary).
         dashState.movementPerPoint = (indexData.match_summary || {}).movementPerPoint || [];
+        // The point panel may have rendered before this arrived — re-render it now
+        // so the current point's movement cards appear without needing to navigate.
+        if (dashState.scope === 'point' && dashState.currentPointData) renderStatsPanel('point');
 
         dashState.p1Name = resolvePlayerName(1, indexData.player_1?.name);
         dashState.p2Name = resolvePlayerName(2, indexData.player_2?.name);
