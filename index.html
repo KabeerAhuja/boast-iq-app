@@ -3755,7 +3755,7 @@
   window.__OPEN_VIDEO_KEY__ = __params.get('video') || null;
   // Mixpanel project token (public/embeddable client-side token). Get it from
   // mixpanel.com → Project Settings → Project Token. Analytics no-ops until set.
-  window.__MIXPANEL_TOKEN__ = 'PASTE_MIXPANEL_TOKEN_HERE';
+  window.__MIXPANEL_TOKEN__ = '8b963f0f946e46cfe3475794051d56ef';
   window.__DEMO_VIDEO_KEY__ = 'conrad_tall_dude_1_74492d1a_2026-07-03_17-39-34';
   // Direct public download URL for the demo source video. Uses the Firebase Storage
   // download-token endpoint, which is a public capability URL: it bypasses the Storage
@@ -3855,6 +3855,28 @@
 
       <div class="share-section">
         <button class="btn-coach-toggle" id="btn-coach-back">← Back to Manage Coach</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Capture-date modal: shown after upload when the video's metadata had no
+     recording date, so we can still place it correctly on the activity calendar. -->
+<div id="capture-date-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">When was this taken?</h3>
+      <button class="modal-close" id="btn-close-capture-date" aria-label="Close">×</button>
+    </div>
+    <div class="share-section">
+      <div class="share-link-hint" id="capture-date-hint">We couldn't read the recording date from this video. Enter the date it was filmed so it lands on the right day of your activity calendar.</div>
+      <div class="share-link-row" style="margin-top:12px;">
+        <input type="date" class="form-input" id="capture-date-input">
+      </div>
+      <div class="share-msg" id="capture-date-msg" style="display:none;"></div>
+      <div class="share-link-row" style="margin-top:16px; gap:10px;">
+        <button class="btn btn-primary" id="btn-save-capture-date">Save date</button>
+        <button class="btn-coach-toggle" id="btn-skip-capture-date">Skip</button>
       </div>
     </div>
   </div>
@@ -5094,6 +5116,7 @@ let pendingSegmentStart = null;     // {frame, sec} while waiting for end mark
 let perGamePlayerPositions = [];    // index-aligned to gameSegments: [{player1:[x,y], player2:[x,y]}, ...]
 let currentGameForPlayerClick = 0;  // loop index during per-game Select Players
 let parentVideoKey = null;          // base key from makeVideoKey (physical upload)
+let _seekedForKey = null;           // guards the one-time "jump to game start" seek per opened game
 let originalFileName = null;        // preserved for "Match — Game N" titles
 let gameVideoKeys = [];             // per-game video_keys spawned
 // Modal backend URL — set before deploy.
@@ -5260,7 +5283,7 @@ async function renderMyVideosFiltered() {
   }
   if (myVideosDateFilter) {
     docs = docs.filter(({ data }) => {
-      const ts = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+      const ts = videoActivityDate(data);  // match calendar: filmed day, fallback upload day
       if (!ts) return false;
       const y = ts.getFullYear();
       const m = String(ts.getMonth() + 1).padStart(2, "0");
@@ -5628,6 +5651,19 @@ async function renderVideoCard(videoKeyId, data) {
       });
       pop.appendChild(renameBtn);
       pop.appendChild(shareInMenuBtn);
+      // Offer a way to set the recording date when metadata didn't carry one, so
+      // the video can be placed on the correct calendar day.
+      if (data.captureDateKnown === false) {
+        const setDateBtn = document.createElement("button");
+        setDateBtn.type = "button";
+        setDateBtn.textContent = "Set date";
+        setDateBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeAllVideoCardMenus();
+          promptCaptureDate(videoKeyId);
+        });
+        pop.appendChild(setDateBtn);
+      }
     }
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
@@ -5657,9 +5693,11 @@ async function renderVideoCard(videoKeyId, data) {
   titleEl.textContent = data.title || videoKeyId;
   const metaEl = document.createElement("div");
   metaEl.className = "video-card-meta";
-  const dateStr = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate().toLocaleDateString() : "—";
+  // Show the day the match was filmed (falls back to upload day) so the card
+  // agrees with the activity calendar.
+  const actDate = videoActivityDate(data);
   const dateSpan = document.createElement("span");
-  dateSpan.textContent = dateStr;
+  dateSpan.textContent = actDate ? actDate.toLocaleDateString() : "—";
   metaEl.appendChild(dateSpan);
 
   // Owner label, bottom-right of meta row. Hidden entirely for self-owned videos;
@@ -7478,6 +7516,11 @@ async function handleFile(file) {
         // status === "pending": loop again.
       }
     })();
+    preparePromise.then((r) => {
+      // Metadata is back from the server right after upload. If the source carried
+      // no recording date, ask the user for it so the activity calendar is accurate.
+      if (r && r.capture_date_known === false) promptCaptureDate(videoKey);
+    });
     preparePromise.catch((err) => {
       console.warn("Background /api/prepare failed:", err);
       // Don't surface to UI here — startProcessing will report if it really matters.
@@ -7834,9 +7877,42 @@ document.getElementById("btn-continue-config").addEventListener("click", async (
   initMarkGames();
   showStep("markGames");
 });
+// Build the camera/EXIF readout spans from the extracted metadata. Every field
+// the user asked for is shown; ones the video container didn't carry (aperture /
+// exposure / ISO are usually absent on phone video) read "Not recorded".
+function cameraMetaSpans(meta) {
+  const NR = "Not recorded";
+  const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  // Capture date (captureDate string "YYYY-MM-DD" → locale date).
+  let dateStr = NR;
+  if (meta.capture_date) {
+    const d = new Date(meta.capture_date + "T12:00:00");
+    dateStr = isNaN(d) ? meta.capture_date : d.toLocaleDateString();
+  }
+  const camera = meta.camera_model || meta.camera_make || NR;
+  let lens = NR;
+  if (meta.lens_type || meta.focal_length) {
+    const parts = [];
+    if (meta.lens_type) parts.push(cap(meta.lens_type));
+    if (meta.focal_length) parts.push(`${meta.focal_length}mm`);
+    lens = parts.join(" · ");
+  }
+  const aperture = meta.f_number ? `ƒ/${meta.f_number}` : NR;
+  let exposure = NR;
+  if (meta.exposure_time) {
+    exposure = meta.exposure_time < 1
+      ? `1/${Math.round(1 / meta.exposure_time)}s`
+      : `${meta.exposure_time}s`;
+  }
+  const iso = meta.iso ? `ISO ${meta.iso}` : NR;
+  return [
+    `📅 ${dateStr}`, `📷 ${camera}`, `🔎 ${lens}`,
+    `Aperture ${aperture}`, `Exposure ${exposure}`, iso,
+  ].map((t) => `<span>${t}</span>`).join("");
+}
 function setupFrameSelection(meta) {
   document.getElementById("player-names-display").innerHTML = `<span class="p1-name">${playerConfig.player_1.name} (${playerConfig.player_1.handedness[0].toUpperCase()})</span><span class="p2-name">${playerConfig.player_2.name} (${playerConfig.player_2.handedness[0].toUpperCase()})</span>`;
-  document.getElementById("video-meta").innerHTML = `<span>${meta.src_width}×${meta.src_height}</span><span>${meta.src_fps} fps</span><span>${meta.duration_sec}s</span>`;
+  document.getElementById("video-meta").innerHTML = `<span>${meta.src_width}×${meta.src_height}</span><span>${meta.src_fps} fps</span><span>${meta.duration_sec}s</span>` + cameraMetaSpans(meta);
   const canvas = document.getElementById("frame-canvas"), ctx = canvas.getContext("2d");
   frameImage = new Image();
   frameImage.onload = () => { canvas.width = frameImage.width; canvas.height = frameImage.height; drawFrame(ctx, frameImage); };
@@ -8561,6 +8637,19 @@ function showResults(msg) {
       if (ptTotEl) ptTotEl.textContent = points.length;
       if (points.length > 0 && dashState.currentPointNum == null) {
         setCurrentPoint(0);
+      }
+      // Multi-game match: the viewer plays the full combined video, so opening a
+      // game (…__gN) must jump to that game's start instead of sitting at t=0.
+      // Fires once per opened game (applyPoints runs twice: cache + revalidate),
+      // and again when videoKey changes (public in-viewer game switch).
+      if (/__g\d+$/.test(videoKey) && points.length && _seekedForKey !== videoKey) {
+        _seekedForKey = videoKey;
+        const startSec = (data && data.time_range && data.time_range.start_sec != null)
+          ? data.time_range.start_sec
+          : (points[0] && points[0].timestamp_sec) || 0;
+        const seek = () => { try { pvVideo.currentTime = Math.max(0, Math.min(startSec, pvVideo.duration || startSec)); } catch (e) {} };
+        if (pvVideo.readyState >= 1) seek();
+        else pvVideo.addEventListener('loadedmetadata', seek, { once: true });
       }
     }
 
@@ -11559,6 +11648,16 @@ function ymdKey(d) {
   return `${y}-${m}-${day}`;
 }
 
+// The date a video should be filed under: prefer captureDate (when it was actually
+// filmed, from the source metadata) and fall back to createdAt (upload time) so a
+// clip whose capture date is unknown still shows up rather than vanishing. Used by
+// BOTH the calendar and the My Videos day-filter so they always agree.
+function videoActivityDate(data) {
+  const cap = data.captureDate && data.captureDate.toDate ? data.captureDate.toDate() : null;
+  if (cap) return cap;
+  return data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+}
+
 async function loadCalendarMonth() {
   const grid = document.getElementById("calendar-grid");
   const loadingEl = document.getElementById("calendar-loading");
@@ -11586,7 +11685,7 @@ async function loadCalendarMonth() {
     snap.docs.forEach((d) => {
       const data = d.data();
       if (data.hiddenFromList) return;  // Skip parent docs of segmented uploads
-      const ts = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : null;
+      const ts = videoActivityDate(data);  // day the match was filmed (falls back to upload day)
       if (!ts) return;
       if (ts.getFullYear() !== calMonth.getFullYear() || ts.getMonth() !== calMonth.getMonth()) return;
       const key = ymdKey(ts);
@@ -11650,7 +11749,7 @@ function renderCalendarGrid() {
     const tip = document.createElement("div");
     tip.className = "calendar-tooltip";
     if (videos.length) {
-      tip.textContent = videos.length === 1 ? "1 video uploaded — click to view" : `${videos.length} videos uploaded — click to view`;
+      tip.textContent = videos.length === 1 ? "1 video — click to view" : `${videos.length} videos — click to view`;
     } else {
       tip.textContent = "No uploads";
     }
@@ -11668,6 +11767,72 @@ function navigateToDayVideos(ymd) {
   showStep("videos");
   loadMyVideos();
 }
+
+// ---- Capture-date prompt ----
+// Ask the user when a video was filmed when its metadata carried no recording
+// date, and write it back as captureDate so the activity calendar is accurate.
+// Reusable: called right after upload, and from a "Set date" affordance on
+// undated videos.
+let captureDateTargetKey = null;
+const captureDateModal = document.getElementById("capture-date-modal");
+
+function promptCaptureDate(videoKey) {
+  if (!videoKey || !currentUser) return;
+  captureDateTargetKey = videoKey;
+  const input = document.getElementById("capture-date-input");
+  try { input.valueAsDate = new Date(); } catch (e) { input.value = ""; }
+  input.max = ymdKey(new Date());  // can't have been filmed in the future
+  const msg = document.getElementById("capture-date-msg");
+  msg.style.display = "none";
+  captureDateModal.style.display = "flex";
+  setTimeout(() => { try { input.focus(); } catch (e) {} }, 30);
+}
+
+function closeCaptureDateModal() {
+  captureDateModal.style.display = "none";
+  captureDateTargetKey = null;
+}
+
+document.getElementById("btn-close-capture-date").addEventListener("click", closeCaptureDateModal);
+document.getElementById("btn-skip-capture-date").addEventListener("click", closeCaptureDateModal);
+captureDateModal.addEventListener("click", (e) => { if (e.target === captureDateModal) closeCaptureDateModal(); });
+
+document.getElementById("btn-save-capture-date").addEventListener("click", async () => {
+  const key = captureDateTargetKey;
+  const input = document.getElementById("capture-date-input");
+  const msg = document.getElementById("capture-date-msg");
+  if (!key || !input.value) {
+    msg.textContent = "Pick a date first.";
+    msg.style.display = "block";
+    return;
+  }
+  const saveBtn = document.getElementById("btn-save-capture-date");
+  saveBtn.disabled = true;
+  try {
+    // Noon-local so the stored instant never shifts to the previous/next day when
+    // read back in another timezone.
+    const d = new Date(input.value + "T12:00:00");
+    await updateDoc(doc(fbFirestore, "videos", key), {
+      captureDate: d,
+      captureDateSource: "user",
+      captureDateKnown: true,
+    });
+    closeCaptureDateModal();
+    // Refresh whichever view is showing so the new date is reflected immediately:
+    // the calendar mark on the profile page, or the card date in My Videos.
+    if (document.getElementById("step-profile").classList.contains("active")) {
+      loadCalendarMonth();
+    } else if (document.getElementById("step-videos").classList.contains("active")) {
+      loadMyVideos();
+    }
+  } catch (err) {
+    console.error("captureDate save failed:", err);
+    msg.textContent = `Couldn't save: ${err.code || err.message}`;
+    msg.style.display = "block";
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
 
 /* ===== Demo mode loader =====
    Runs after all functions (openVideo, showResults, showStep) are defined.
