@@ -8300,6 +8300,8 @@ async function spawnGameJobs() {
         gameCount: gameSegments.length,
         trimStartFrame: seg.startFrame,
         trimEndFrame: seg.endFrame,
+        trimStartSec: seg.startSec,
+        trimEndSec: seg.endSec,
       });
     } catch (err) { console.warn("game doc updateDoc failed:", err); }
 
@@ -8352,6 +8354,11 @@ async function spawnGameJobs() {
         video_key: gvk,
         trim_start_frame: seg.startFrame,
         trim_end_frame: seg.endFrame,
+        // Preferred: marked TIMES (fps-agnostic). The backend converts these to
+        // frames using the video's real fps, so dual-rate/VFR videos segment
+        // correctly instead of scrambling the games.
+        trim_start_sec: seg.startSec,
+        trim_end_sec: seg.endSec,
       }));
     };
     // If the WS dies before we see a terminal message, we spin up an HTTP
