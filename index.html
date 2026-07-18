@@ -9367,18 +9367,17 @@ function showResults(msg) {
       scrub.max = end;
     }
 
-    // Monotonic token guarding against out-of-order point loads. During
-    // continuous playback we fire setCurrentPoint() at each boundary; an
-    // uncached point awaits a network fetch. If an earlier point's fetch
-    // resolves AFTER a later one, applying its (now stale) data would leave
-    // the live heatmap dot pinned to a rally the video has already played
-    // past — it looks frozen until you manually navigate. Only the latest
-    // request is allowed to write dashState.
-    let dashPointReqSeq = 0;
+    // Point numbers whose rally JSON is currently being fetched. Dedups
+    // concurrent requests so the self-healing retry in the `timeupdate` handler
+    // can fire every tick without spamming the network.
+    const pointFetchInFlight = new Set();
     async function setCurrentPoint(pointIdx) {
       const pt = points[pointIdx];
       if (!pt) return;
-      const reqSeq = ++dashPointReqSeq;
+      // `currentPointNum` is the point we WANT shown right now — the latest call
+      // always wins. Async fetches below apply their result only if it's still
+      // the wanted point, so a slow or out-of-order response can't pin the live
+      // heatmap to a rally the video has already played past.
       dashState.currentPointNum = pt.point_number;
       dashState.currentPointStart = pt.timestamp_sec;
       const ptCurEl = document.getElementById('dash-point-cur');
@@ -9386,6 +9385,8 @@ function showResults(msg) {
 
       let data = pointRallyCache[pt.point_number] || getCachedRally(videoKey, pt.point_number);
       if (!data) {
+        if (pointFetchInFlight.has(pt.point_number)) return;  // already fetching this point
+        pointFetchInFlight.add(pt.point_number);
         try {
           const r = await fetch(`${API}/api/points/${videoKey}/${pt.point_number}`);
           if (r.ok) {
@@ -9394,11 +9395,14 @@ function showResults(msg) {
             writeStatsCache(videoKey, { rallies: { [pt.point_number]: data } });
           }
         } catch (e) { /* ignore */ }
-        // Bail if a newer point was requested while we awaited the fetch —
-        // never let a stale response clobber fresher state.
-        if (reqSeq !== dashPointReqSeq) return;
+        finally { pointFetchInFlight.delete(pt.point_number); }
+        // A newer point is wanted now → drop this (stale) result.
+        if (pt.point_number !== dashState.currentPointNum) return;
+        // Fetch failed (offline / 5xx). Leave the current heatmap in place rather
+        // than blanking it to null — the timeupdate reconciler retries next tick.
+        if (!data) return;
       }
-      dashState.currentPointData = data || null;
+      dashState.currentPointData = data;
       updateScrubBounds();
       syncViewerStar();
       renderDashAll();
@@ -10550,8 +10554,15 @@ function showResults(msg) {
           if (currentPointIndex !== i) {
             currentPointIndex = i;
             highlightCurrentPoint({ scroll: false });
-            setCurrentPoint(i);
           }
+          // Keep the live heatmap's data locked to the point under the playhead.
+          // Re-trigger whenever the loaded rally isn't this point yet — this
+          // self-heals a setCurrentPoint() whose fetch earlier failed or stalled,
+          // so the heatmap can't stay frozen until the user manually navigates.
+          // In-flight dedup (setCurrentPoint) keeps this from spamming the network.
+          const want = points[i].point_number;
+          const loaded = dashState.currentPointData && dashState.currentPointData.point_number;
+          if (loaded !== want) setCurrentPoint(i);
           break;
         }
       }
