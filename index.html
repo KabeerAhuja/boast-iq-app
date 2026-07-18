@@ -1211,12 +1211,26 @@
     font-size: 13px;
     color: var(--text-dim);
   }
-  
+
+  .pv-point-winner {
+    font-size: 13px;
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.9;
+  }
+  .pv-point-winner:empty { display: none; }
+
   .pv-expand-icon {
     font-size: 14px;
     color: var(--text-dim);
     transition: transform 0.3s ease;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
   }
+  .pv-expand-icon:hover { background: rgba(255,255,255,0.06); color: var(--text); }
   
   .pv-point-item.expanded .pv-expand-icon { transform: rotate(180deg); }
 
@@ -8586,7 +8600,8 @@ function showResults(msg) {
     
     let points = [];
     let currentPointIndex = 0;
-    
+    let pointWinners = {};  // point_number → 'player_1' | 'player_2' (winner of that point)
+
     if (videoBlobUrl) { pvVideo.src = videoBlobUrl; pvVideo.load(); }
     
     // Use API endpoint (more reliable - handles GCS auth on backend)
@@ -9090,11 +9105,11 @@ function showResults(msg) {
         card('Recovery time', dual(recFmt(s.recoveryP1), recFmt(s.recoveryP2))),
       ];
       body.innerHTML = `<div class="dash-stats-grid">${[
+        ...movementCards,
         card('Duration', one(s.duration)),
         card('Total shots', one(s.totalShots)),
         card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
         card('Distance', dual(s.distP1, s.distP2)),
-        ...movementCards,
       ].join('')}</div>`;
     }
 
@@ -9129,6 +9144,11 @@ function showResults(msg) {
         for (let i = 1; i <= totalPoints; i++) {
           if (ralliesMap[i] != null) { allRallies.push(ralliesMap[i]); pointRallyCache[i] = ralliesMap[i]; }
         }
+
+        // Winner label per point row (squash serve-based inference). Paint in.
+        pointWinners = computeAllWinners(ralliesMap, totalPoints);
+        applyPointWinners();
+
         if (allRallies.length === 0) return;
 
         const durations = allRallies.map(r => r.duration_sec || 0);
@@ -9671,6 +9691,69 @@ function showResults(msg) {
       return m + ":" + s.toString().padStart(2, "0");
     }
     
+    // Fallback winner rule = the player who did NOT hit last ("last hitter
+    // loses"). Used only for the final point and when serve data is missing.
+    function computePointWinner(rd) {
+      const rally = (rd && rd.rally) || [];
+      const last = rally[rally.length - 1];
+      if (!last || (last.hit_by !== 'player_1' && last.hit_by !== 'player_2')) return null;
+      return last.hit_by === 'player_1' ? 'player_2' : 'player_1';
+    }
+
+    // Server of a point = whoever hit the first shot (the serve), plus which
+    // service box they served from (court x < 3.2 = one side, ≥ 3.2 = the other;
+    // the court is 6.4 m wide so the two boxes sit cleanly on opposite halves).
+    function pointServer(rd) {
+      const rally = (rd && rd.rally) || [];
+      const serve = rally[0];
+      if (!serve || (serve.hit_by !== 'player_1' && serve.hit_by !== 'player_2')) return null;
+      const pos = serve[serve.hit_by === 'player_1' ? 'player_1_position' : 'player_2_position'] || {};
+      const x = pos.x;
+      return { player: serve.hit_by, side: (x == null ? null : (x < 3.2 ? 'L' : 'R')) };
+    }
+
+    // Squash serve-based winner inference. Comparing each point's server to the
+    // next point's server:
+    //   • same server, side switched → the server won this point
+    //   • same server, same side     → let/replay, no decided winner (blank)
+    //   • server changed             → the returner (= the next server) won it
+    // The final point (no "next") falls back to last-hitter-loses.
+    function computeAllWinners(ralliesMap, totalPoints) {
+      const servers = {};
+      for (let i = 1; i <= totalPoints; i++) {
+        if (ralliesMap[i]) servers[i] = pointServer(ralliesMap[i]);
+      }
+      const winners = {};
+      for (let i = 1; i <= totalPoints; i++) {
+        if (!ralliesMap[i]) continue;
+        const cur = servers[i], nxt = servers[i + 1];
+        let winner;
+        if (cur && cur.player && nxt && nxt.player) {
+          if (nxt.player === cur.player) {
+            // Same server: switched box → server won; same box → let (undecided).
+            winner = (cur.side && nxt.side && nxt.side !== cur.side) ? cur.player : null;
+          } else {
+            winner = nxt.player;  // server changed → returner won
+          }
+        } else {
+          winner = computePointWinner(ralliesMap[i]);  // last point / missing data
+        }
+        if (winner) winners[i] = winner;
+      }
+      return winners;
+    }
+    // Paint winner labels into the (already-rendered) point rows from the
+    // pointWinners map. Safe to call before winners are known — rows stay blank.
+    function applyPointWinners() {
+      pvList.querySelectorAll('.pv-point-winner[data-point-number]').forEach(el => {
+        const pnum = parseInt(el.dataset.pointNumber);
+        const w = pointWinners[pnum];
+        if (w === 'player_1')      el.innerHTML = `<span class="dash-dot dash-dot-p1"></span>${dashState.p1Name || 'Player 1'}`;
+        else if (w === 'player_2') el.innerHTML = `<span class="dash-dot dash-dot-p2"></span>${dashState.p2Name || 'Player 2'}`;
+        else el.innerHTML = '';
+      });
+    }
+
     function renderPointsList() {
       pvList.innerHTML = points.map((p, i) => {
         // Prefer the v2 detector's calm-period end (real rally cutoff).
@@ -9689,12 +9772,11 @@ function showResults(msg) {
             <div class="pv-point-header-left">
               <button class="pv-star-btn${isStarred ? ' starred' : ''}" data-point-number="${p.point_number}" title="${isStarred ? 'Unstar' : 'Star'} this point" aria-label="${isStarred ? 'Unstar' : 'Star'} point ${p.point_number}">${isStarred ? '★' : '☆'}</button>
               <span class="pv-point-label">Point ${p.point_number}</span>
-              <span class="pv-point-time" data-time="${p.timestamp_sec}">${formatTime(p.timestamp_sec)}</span>
+              <span class="pv-point-duration">${duration}s</span>
+              <span class="pv-point-winner" data-point-number="${p.point_number}"></span>
             </div>
             <div class="pv-point-header-right">
-              <span class="pv-point-duration">${duration}s</span>
-              <button class="pv-share-clip-btn" data-point-number="${p.point_number}" title="Share this point as a public clip" aria-label="Share point ${p.point_number}">↗ Share</button>
-              <span class="pv-expand-icon">▼</span>
+              <span class="pv-expand-icon" title="Show details" aria-label="Toggle details for point ${p.point_number}">▼</span>
             </div>
           </div>
           <div class="pv-point-stats" id="pv-stats-${p.point_number}">
@@ -9703,42 +9785,39 @@ function showResults(msg) {
         </div>`;
       }).join("");
       
-      // Add click handlers
+      // Clicking anywhere on the bar: select the point, seek the video to its
+      // start, and scroll up so the video is in view. (The ▼ arrow expands the
+      // details instead — see below.)
       pvList.querySelectorAll(".pv-point-header").forEach(header => {
         header.addEventListener("click", (e) => {
           const pointItem = header.parentElement;
           const idx = parseInt(pointItem.dataset.index);
+          currentPointIndex = idx;
+          highlightCurrentPoint({ scroll: false });
+          setCurrentPoint(idx);
+          const tsec = points[idx] ? points[idx].timestamp_sec : 0;
+          pvVideo.currentTime = Math.max(0, tsec - 1);
+          pvVideo.play();
+          pvVideo.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+
+      // ▼ arrow: expand/collapse the point's detail stats (without seeking).
+      pvList.querySelectorAll(".pv-expand-icon").forEach(icon => {
+        icon.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const pointItem = icon.closest(".pv-point-item");
           const pointNum = parseInt(pointItem.dataset.pointNumber);
-          
-          // Toggle expanded state
           const wasExpanded = pointItem.classList.contains("expanded");
-          
-          // Collapse all others
           pvList.querySelectorAll(".pv-point-item").forEach(item => item.classList.remove("expanded"));
-          
           if (!wasExpanded) {
             pointItem.classList.add("expanded");
             loadPointRally(pointNum);
           }
-          
-          // Update current point and go to video time
-          currentPointIndex = idx;
-          highlightCurrentPoint();
-          setCurrentPoint(idx);
-        });
-      });
-      
-      // Add timestamp click handlers (jump to video without expanding)
-      pvList.querySelectorAll(".pv-point-time").forEach(timeEl => {
-        timeEl.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const time = parseFloat(timeEl.dataset.time);
-          pvVideo.currentTime = Math.max(0, time - 1);
-          pvVideo.play();
         });
       });
 
-      // Star buttons: toggle without expanding the card
+      // Star buttons: toggle without triggering the bar's seek.
       pvList.querySelectorAll(".pv-star-btn").forEach(btn => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -9749,15 +9828,8 @@ function showResults(msg) {
         });
       });
 
-      // Share-clip buttons: trigger a backend render (cached) and
-      // copy a public viewer URL to clipboard.
-      pvList.querySelectorAll(".pv-share-clip-btn").forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const pnum = parseInt(btn.dataset.pointNumber);
-          shareClipForPoint(pnum, btn);
-        });
-      });
+      // Winner labels may already be known (list re-render); paint them in.
+      applyPointWinners();
     }
 
     async function shareClipForPoint(pointNumber, btnEl) {
