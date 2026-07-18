@@ -4513,8 +4513,8 @@
           <div class="dash-panel-h">
             <div class="dash-panel-title">Statistics</div>
             <div class="dash-stats-toggle" id="dash-stats-toggle">
-              <button class="active" data-scope="match">Full match</button>
-              <button data-scope="point">Current point</button>
+              <button data-scope="match">Full match</button>
+              <button class="active" data-scope="point">Current point</button>
               <button data-scope="notes">Notes</button>
             </div>
           </div>
@@ -8714,7 +8714,7 @@ function showResults(msg) {
     const dashState = {
       filter: { p1: true, p2: true },
       showEgg: true,
-      scope: 'match',
+      scope: 'point',
       currentPointNum: null,   // 1-based, set when a point becomes "current"
       currentPointData: null,  // cached rally for current point (null until loaded)
       currentPointStart: 0,
@@ -8882,9 +8882,84 @@ function showResults(msg) {
       return Math.max(0, (videoTime - origin) / dt);
     }
 
+    // ---- Full-match (whole current game) aggregate panels ----
+    // Each game is its own video, so the viewer only ever holds ONE game's
+    // points. Aggregating over the rally cache is therefore exactly "the current
+    // game", never other games of a multi-game match. These panels are static:
+    // no live dot/trail and no time cursor — every movement sample / ball
+    // contact from every loaded point of the game is drawn at once.
+    function dashGamePoints() {
+      // Prefer the bulk rally cache (filled by loadMatchAggregates). Always fold
+      // in the current point too, so the panel isn't empty in the window before
+      // the bulk load has finished. De-dupe by point_number.
+      const seen = new Set();
+      const out = [];
+      const push = (pt) => {
+        if (!pt) return;
+        const k = pt.point_number != null ? String(pt.point_number) : null;
+        if (k) { if (seen.has(k)) return; seen.add(k); }
+        out.push(pt);
+      };
+      Object.values(pointRallyCache).forEach(push);
+      push(dashState.currentPointData);
+      return out;
+    }
+
+    function renderDashHeatmapMatch(host) {
+      const pts = dashGamePoints();
+      // Pick a sample stride that keeps the SVG light regardless of match length.
+      let totalSamples = 0;
+      pts.forEach(pt => ['player_1', 'player_2'].forEach(pl => {
+        const m = pt.movement && pt.movement[pl];
+        if (m && Array.isArray(m.x)) totalSamples += m.x.length;
+      }));
+      const MAX_BLOBS = 2600;
+      const stride = Math.max(1, Math.ceil(totalSamples / MAX_BLOBS));
+      const blobsFor = (player, gradId) => {
+        if (!dashState.filter[player === 'player_1' ? 'p1' : 'p2']) return '';
+        let out = '';
+        pts.forEach(pt => {
+          const m = pt.movement && pt.movement[player];
+          if (!m || !Array.isArray(m.x) || !Array.isArray(m.y)) return;
+          const n = Math.min(m.x.length, m.y.length);
+          for (let i = 0; i < n; i += stride) {
+            const x = m.x[i], y = m.y[i];
+            if (x == null || y == null) continue;
+            out += `<circle cx="${cX(x).toFixed(1)}" cy="${cY(y).toFixed(1)}" r="60" fill="url(#${gradId})"/>`;
+          }
+        });
+        return out;
+      };
+      const inner = (dashState.showEgg ? eggPathSvg() : '')
+                  + blobsFor('player_1', 'dash-heat-p1')
+                  + blobsFor('player_2', 'dash-heat-p2');
+      host.innerHTML = courtShellSvg(inner);
+    }
+
+    function renderDashShotsMatch(wallHost, floorHost) {
+      const pts = dashGamePoints();
+      const wallParts = [], floorParts = [];
+      pts.forEach(pt => (pt.rally || []).forEach(s => {
+        const key = s.hit_by === 'player_1' ? 'p1' : 'p2';
+        if (!dashState.filter[key]) return;
+        const color = key === 'p1' ? '#00f0ff' : '#ff2e93';
+        if (s.front_wall_contact && s.front_wall_contact.x != null) {
+          const fw = s.front_wall_contact;
+          wallParts.push(`<circle cx="${wX(fw.x).toFixed(1)}" cy="${wY(fw.y).toFixed(1)}" r="11" fill="${color}" opacity="0.82" stroke="rgba(0,0,0,0.4)" stroke-width="1.5"/>`);
+        }
+        if (s.floor_bounce && s.floor_bounce.x != null) {
+          const fb = s.floor_bounce;
+          floorParts.push(`<circle cx="${cX(fb.x).toFixed(1)}" cy="${cY(fb.y).toFixed(1)}" r="11" fill="${color}" opacity="0.82" stroke="rgba(0,0,0,0.4)" stroke-width="1.5"/>`);
+        }
+      }));
+      wallHost.innerHTML = wallShellSvg(wallParts.join(''));
+      floorHost.innerHTML = courtShellSvg(floorParts.join(''));
+    }
+
     function renderDashHeatmap() {
       const host = document.getElementById('dash-heatmap-svg');
       if (!host) return;
+      if (dashState.scope === 'match') { renderDashHeatmapMatch(host); return; }
       const pt = dashState.currentPointData;
       if (!pt) { host.innerHTML = courtShellSvg(dashState.showEgg ? eggPathSvg() : ''); return; }
 
@@ -8958,6 +9033,7 @@ function showResults(msg) {
       const wallHost = document.getElementById('dash-wall-svg');
       const floorHost = document.getElementById('dash-floor-svg');
       if (!wallHost || !floorHost) return;
+      if (dashState.scope === 'match') { renderDashShotsMatch(wallHost, floorHost); return; }
       const pt = dashState.currentPointData;
       if (!pt) { wallHost.innerHTML = wallShellSvg(''); floorHost.innerHTML = courtShellSvg(''); return; }
 
@@ -9003,7 +9079,9 @@ function showResults(msg) {
     function dashTick() {
       // Never let a single bad render kill the loop — always schedule the next
       // frame, so the heatmap can't freeze mid-playback on a transient error.
-      try { renderDashHeatmap(); } catch (e) { console.warn('heatmap render failed', e); }
+      // The Full-match aggregate is static (no time cursor), so skip the
+      // per-frame rebuild while it's showing; it's repainted on toggle instead.
+      try { if (dashState.scope !== 'match') renderDashHeatmap(); } catch (e) { console.warn('heatmap render failed', e); }
       dashRafId = requestAnimationFrame(dashTick);
     }
     // Cancel any existing (possibly stale) frame first so the loop always
@@ -9200,7 +9278,7 @@ function showResults(msg) {
           recoveryP1: (indexData.match_summary || {}).recoveryP1,
           recoveryP2: (indexData.match_summary || {}).recoveryP2,
         };
-        if (dashState.scope === 'match') renderStatsPanel('match');
+        if (dashState.scope === 'match') { renderStatsPanel('match'); renderDashAll(); }
 
         // Phase 4: cache aggregates on the video doc so the Coach Dashboard
         // can sum them across student matches without re-fetching every point JSON.
@@ -9248,9 +9326,18 @@ function showResults(msg) {
       scrub.max = end;
     }
 
+    // Monotonic token guarding against out-of-order point loads. During
+    // continuous playback we fire setCurrentPoint() at each boundary; an
+    // uncached point awaits a network fetch. If an earlier point's fetch
+    // resolves AFTER a later one, applying its (now stale) data would leave
+    // the live heatmap dot pinned to a rally the video has already played
+    // past — it looks frozen until you manually navigate. Only the latest
+    // request is allowed to write dashState.
+    let dashPointReqSeq = 0;
     async function setCurrentPoint(pointIdx) {
       const pt = points[pointIdx];
       if (!pt) return;
+      const reqSeq = ++dashPointReqSeq;
       dashState.currentPointNum = pt.point_number;
       dashState.currentPointStart = pt.timestamp_sec;
       const ptCurEl = document.getElementById('dash-point-cur');
@@ -9266,8 +9353,9 @@ function showResults(msg) {
             writeStatsCache(videoKey, { rallies: { [pt.point_number]: data } });
           }
         } catch (e) { /* ignore */ }
-      } else {
-        pointRallyCache[pt.point_number] = data;
+        // Bail if a newer point was requested while we awaited the fetch —
+        // never let a stale response clobber fresher state.
+        if (reqSeq !== dashPointReqSeq) return;
       }
       dashState.currentPointData = data || null;
       updateScrubBounds();
@@ -9292,7 +9380,10 @@ function showResults(msg) {
         b.addEventListener('click', () => {
           document.querySelectorAll('#dash-stats-toggle button').forEach(x => x.classList.remove('active'));
           b.classList.add('active');
-          renderStatsPanel(b.dataset.scope);
+          renderStatsPanel(b.dataset.scope);   // also sets dashState.scope
+          // The spatial panels follow the toggle: 'match' → whole-game aggregate,
+          // 'point'/'notes' → live current-point view.
+          renderDashAll();
         });
       });
     }
