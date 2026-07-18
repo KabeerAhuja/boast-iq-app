@@ -4472,7 +4472,7 @@
       <div class="dash-left">
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
-            <video id="pv-video" playsinline webkit-playsinline preload="metadata"></video>
+            <video id="pv-video" playsinline webkit-playsinline preload="auto"></video>
             <button class="dash-viewer-menu-btn" id="dash-viewer-menu-btn" type="button" title="Point options" aria-label="Point options" aria-haspopup="true" aria-expanded="false">⋮</button>
             <div class="dash-viewer-menu" id="dash-viewer-menu" role="menu" aria-hidden="true">
               <button class="dash-menu-item" id="dash-menu-star" type="button" role="menuitem">
@@ -4513,8 +4513,8 @@
           <div class="dash-panel-h">
             <div class="dash-panel-title">Statistics</div>
             <div class="dash-stats-toggle" id="dash-stats-toggle">
-              <button data-scope="match">Full match</button>
               <button class="active" data-scope="point">Current point</button>
+              <button data-scope="match">Full match</button>
               <button data-scope="notes">Notes</button>
             </div>
           </div>
@@ -5103,6 +5103,24 @@ let player1 = null, player2 = null, ws = null;
 let frameImage = null, repromptImage = null;
 let repromptP1 = null, repromptP2 = null;
 let videoBlobUrl = null;
+// Poster (first-frame) URL for the viewer <video>. Resolved as soon as a video
+// is opened so the frame area shows the first frame instantly instead of black
+// while the media buffers. The card grid already displayed this same
+// first_frame.png, so it's typically served straight from the browser cache.
+let viewerPosterUrl = null;
+// Bumped synchronously each time a video is opened, so async poster resolves
+// from a superseded open can be ignored.
+let viewerOpenToken = 0;
+// Resolve the backend-uploaded first_frame.png for a video (falling back to the
+// parent's, for multi-game jobs). Returns null if none is reachable.
+async function resolveFirstFrameUrl(key, parentKey) {
+  const paths = [`video-data/${key}/first_frame.png`];
+  if (parentKey && parentKey !== key) paths.push(`video-data/${parentKey}/first_frame.png`);
+  for (const p of paths) {
+    try { return await getDownloadURL(ref(fbStorage, p)); } catch (e) { /* try next */ }
+  }
+  return null;
+}
 let playerConfig = { player_1: { name: "Player 1", handedness: "right" }, player_2: { name: "Player 2", handedness: "right" } };
 
 // Resolve the display name for a player slot. The live `playerConfig` (loaded
@@ -5786,6 +5804,29 @@ async function openVideo(key, data) {
     alert(`This video is in '${status}' state and can't be viewed yet.`);
     return;
   }
+  // Kick off the two network fetches the viewer needs — the source-video URL and
+  // the first-frame poster — immediately, so they run CONCURRENTLY with the stats
+  // ping below instead of serially after it. This roughly halves the round-trips
+  // before the viewer can open.
+  const srcKey = data.parentVideoKey || key;  // Multi-game jobs share one upload under the parent key.
+  const sourceUrlPromise = data._publicSourceUrl
+    ? Promise.resolve(data._publicSourceUrl)   // Public share view supplies a pre-signed URL (no Storage auth).
+    : getDownloadURL(ref(fbStorage, `uploaded-videos/${srcKey}.mp4`)).catch((err) => {
+        console.warn("Source video URL fetch failed:", err);
+        return null;
+      });
+  viewerPosterUrl = null;
+  const myOpenToken = ++viewerOpenToken;
+  resolveFirstFrameUrl(key, data.parentVideoKey).then((u) => {
+    // Ignore if a newer video was opened while this resolved.
+    if (myOpenToken !== viewerOpenToken) return;
+    viewerPosterUrl = u;
+    // Apply the poster the moment it resolves (in case it lands after the
+    // viewer already opened).
+    const v = document.getElementById("pv-video");
+    if (u && v) v.poster = u;
+  }).catch(() => {});
+
   // Quick ping: even if status==complete, the post-processing pipeline that generates
   // point_starts.json runs after the WS "complete" message. Bail with a helpful message
   // if the stats aren't there yet instead of showing a broken "Generating stats..." UI.
@@ -5807,16 +5848,7 @@ async function openVideo(key, data) {
   // (No currentUser at all → public share view → never show it.)
   const shareBtn = document.getElementById("btn-dash-share");
   if (shareBtn) shareBtn.style.display = (data.ownerUid === currentUser?.uid) ? "inline-flex" : "none";
-  try {
-    // Multi-game jobs share one physical upload under the parent key.
-    const srcKey = data.parentVideoKey || key;
-    // Public share view supplies a pre-signed source URL (no Storage auth).
-    videoBlobUrl = data._publicSourceUrl
-      || await getDownloadURL(ref(fbStorage, `uploaded-videos/${srcKey}.mp4`));
-  } catch (err) {
-    console.warn("Source video URL fetch failed:", err);
-    videoBlobUrl = null;
-  }
+  videoBlobUrl = await sourceUrlPromise;
   showStep("results");
   showResults({});
 }
@@ -8609,7 +8641,14 @@ function showResults(msg) {
     let currentPointIndex = 0;
     let pointWinners = {};  // point_number → 'player_1' | 'player_2' (winner of that point)
 
-    if (videoBlobUrl) { pvVideo.src = videoBlobUrl; pvVideo.load(); }
+    if (videoBlobUrl) {
+      // Show the first frame instantly (usually already browser-cached from the
+      // card grid) instead of a black box while the media buffers. Always assign
+      // (even empty) so a previously-opened video's poster can't linger.
+      pvVideo.poster = viewerPosterUrl || "";
+      pvVideo.src = videoBlobUrl;
+      pvVideo.load();
+    }
     
     // Use API endpoint (more reliable - handles GCS auth on backend)
     const pointsUrl = `${API}/api/points/${videoKey}`;
