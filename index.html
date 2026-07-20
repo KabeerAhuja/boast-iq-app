@@ -4704,12 +4704,7 @@ function extractFrameAtSec(sec) {
       canvas.width = w; canvas.height = h;
       canvas.getContext("2d").drawImage(video, 0, 0, w, h);
       const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-      const luma = _meanLumaOfCanvas(canvas);
-      console.log("[frameDbg] grab: sec=", sec, "target=", target,
-        "currentTime=", video.currentTime, "reseeks=", reseeks,
-        "luma=", Math.round(luma), "b64len=", frame_b64.length,
-        "src=", (videoBlobUrl || "").slice(0, 24));
-      ok({ frame_b64, src_width: w, src_height: h, looks_black: luma < 10 });
+      ok({ frame_b64, src_width: w, src_height: h, looks_black: _meanLumaOfCanvas(canvas) < 10 });
     };
 
     const computeTarget = () => {
@@ -8311,9 +8306,6 @@ async function beginPlayerClickForGame(idx) {
   currentGameForPlayerClick = idx;
   player1 = null; player2 = null;
   const seg = gameSegments[idx];
-  console.log("[frameDbg] beginPlayerClickForGame idx=", idx,
-    "of", gameSegments.length, "seg=", JSON.stringify(seg),
-    "startSecs=", gameSegments.map(g => g && g.startSec));
 
   // Show a loading state on the mark-games "Continue" button since frame
   // extraction from a big video can take a second on mobile.
