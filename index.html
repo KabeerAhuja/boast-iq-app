@@ -4658,6 +4658,19 @@ function makeGameVideoKey(baseKey, gameIdx) {
 function extractFrameAtSec(sec) {
   return new Promise((resolve, reject) => {
     if (!videoBlobUrl) { reject(new Error("No local video to read from")); return; }
+
+    // Seeking a COLD, freshly-created element far into a long (~50min) file is
+    // unreliable: the browser can fire `seeked` before the target range has
+    // actually decoded, handing back an early frame. So we (1) warm the decoder
+    // before the first seek, (2) verify the seek LANDED (currentTime AND the
+    // rVFC-reported paint time are close to target) before grabbing, and
+    // (3) re-seek a bounded number of times if it hasn't. Without this every game
+    // collapses to ~the first frame.
+    const TOL_LANDED = 0.5;        // s — currentTime must be within this of target
+    const TOL_PAINT = 1.0;         // s — rVFC mediaTime slack (keyframe/decode)
+    const MAX_RESEEKS = 3;
+    const HARD_TIMEOUT_MS = 20000; // cold far-seek in a long file needs headroom
+
     const video = document.createElement("video");
     video.preload = "auto";
     video.muted = true;
@@ -4672,7 +4685,7 @@ function extractFrameAtSec(sec) {
     document.body.appendChild(video);
     video.src = videoBlobUrl;
 
-    let settled = false;
+    let settled = false, target = null, seekIssued = false, warmed = false, reseeks = 0;
     const cleanup = () => {
       try { video.pause(); } catch (e) {}
       try { video.removeAttribute("src"); video.load(); } catch (e) {}
@@ -4688,25 +4701,65 @@ function extractFrameAtSec(sec) {
       canvas.width = w; canvas.height = h;
       canvas.getContext("2d").drawImage(video, 0, 0, w, h);
       const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-      ok({ frame_b64, src_width: w, src_height: h, looks_black: _meanLumaOfCanvas(canvas) < 10 });
+      const luma = _meanLumaOfCanvas(canvas);
+      console.log("[frameDbg] grab: sec=", sec, "target=", target,
+        "currentTime=", video.currentTime, "reseeks=", reseeks,
+        "luma=", Math.round(luma), "b64len=", frame_b64.length,
+        "src=", (videoBlobUrl || "").slice(0, 24));
+      ok({ frame_b64, src_width: w, src_height: h, looks_black: luma < 10 });
+    };
+
+    const computeTarget = () => {
+      // Never seek to exactly 0 (iOS paints black there); stay just inside the end.
+      const dur = video.duration || sec || 1;
+      target = Math.max(0.05, Math.min(sec, dur - 0.05));
+    };
+    const doSeek = () => { seekIssued = true; try { video.currentTime = target; } catch (e) {} };
+    const startSeekingWhenWarm = () => {
+      if (warmed || target == null) return;
+      warmed = true;
+      doSeek();  // decoder is ready → the first seek won't race an empty pipeline
     };
 
     video.addEventListener("error", () => fail("Could not decode video locally"));
+    // Duration first (to clamp the target); seek only once a decoder is ready.
     video.addEventListener("loadedmetadata", () => {
-      // Never seek to exactly 0 (iOS paints black there); clamp to a small offset.
-      const dur = video.duration || sec || 1;
-      const clamped = Math.max(0.05, Math.min(sec, dur - 0.05));
-      try { video.currentTime = clamped; } catch (e) {}
+      computeTarget();
+      if (video.readyState >= 3 /* HAVE_FUTURE_DATA */) startSeekingWhenWarm();
     });
+    video.addEventListener("canplay", () => { if (target == null) computeTarget(); startSeekingWhenWarm(); });
+
     video.addEventListener("seeked", () => {
+      // Ignore any spurious `seeked` fired before we issued our own seek.
+      if (!seekIssued || target == null) return;
+
+      // Verify the seek actually LANDED. A premature seeked reports currentTime
+      // still far from target — re-issue rather than grab an early frame.
+      if (Math.abs(video.currentTime - target) > TOL_LANDED && reseeks++ < MAX_RESEEKS) {
+        doSeek();
+        return;
+      }
+
+      const afterPaint = (meta) => {
+        // rVFC reports the TRUE presentation time of the frame about to be read.
+        // If it's still far from target the decoder hasn't caught up → re-seek.
+        if (meta && typeof meta.mediaTime === "number"
+            && Math.abs(meta.mediaTime - target) > TOL_PAINT
+            && reseeks++ < MAX_RESEEKS) {
+          doSeek();
+          return;
+        }
+        grabAndFinish();
+      };
+
       // Wait for the seeked frame to actually paint before reading it back.
       if (typeof video.requestVideoFrameCallback === "function") {
-        video.requestVideoFrameCallback(() => grabAndFinish());
+        video.requestVideoFrameCallback((now, meta) => afterPaint(meta));
       } else {
-        requestAnimationFrame(() => grabAndFinish());
+        requestAnimationFrame(() => afterPaint(null));
       }
     });
-    setTimeout(() => fail("Frame extraction timed out"), 9000);
+    setTimeout(() => fail("Frame extraction timed out"), HARD_TIMEOUT_MS);
   });
 }
 
@@ -8258,6 +8311,9 @@ async function beginPlayerClickForGame(idx) {
   currentGameForPlayerClick = idx;
   player1 = null; player2 = null;
   const seg = gameSegments[idx];
+  console.log("[frameDbg] beginPlayerClickForGame idx=", idx,
+    "of", gameSegments.length, "seg=", JSON.stringify(seg),
+    "startSecs=", gameSegments.map(g => g && g.startSec));
 
   // Show a loading state on the mark-games "Continue" button since frame
   // extraction from a big video can take a second on mobile.
@@ -8272,10 +8328,19 @@ async function beginPlayerClickForGame(idx) {
     frame_b64 = res.frame_b64;
     looksBlack = !!res.looks_black;
   } catch (err) {
-    console.warn("Frame extract failed, falling back to first frame:", err);
-    frame_b64 = videoMeta.frame_b64;  // Fallback to the frame we already have
-    // If even the first frame is missing/black (iOS), we'll recover from server.
-    looksBlack = !frame_b64 || !!videoMeta.needs_server_frame;
+    console.warn("Frame extract failed for game", idx, err);
+    if (gameSegments.length === 1) {
+      // Single game: the video's first frame IS this game's start frame, so the
+      // shared grab is a legitimate fallback (and recoverable from the server).
+      frame_b64 = videoMeta.frame_b64;
+      looksBlack = !frame_b64 || !!videoMeta.needs_server_frame;
+    } else {
+      // Multi-game: the shared first frame is the WRONG frame for games 2..N —
+      // substituting it is exactly the identical-frame bug. Show the neutral
+      // "Preparing first frame…" placeholder instead of a false frame.
+      frame_b64 = null;
+      looksBlack = true;
+    }
   } finally {
     mgContinueBtn.disabled = false;
     mgContinueBtn.textContent = savedLabel;
