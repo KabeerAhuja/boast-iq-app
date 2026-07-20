@@ -4745,12 +4745,19 @@ function extractFrameAtSec(sec) {
         return;
       }
 
-      // Wait for the seeked frame to actually paint before reading it back.
+      // Grab the seeked frame once it has painted. Prefer requestVideoFrameCallback
+      // as a fast path, but DO NOT depend on it: for a paused, tiny, occluded
+      // (opacity:0.01, z-index:-1) element Chrome may never composite a frame, so
+      // rVFC can silently never fire. A short timer fallback guarantees the grab
+      // happens regardless — this is the actual root cause of the "stuck on
+      // Preparing first frame…" / identical-frames symptoms.
+      let grabbed = false;
+      const grabOnce = () => { if (grabbed || settled) return; grabbed = true; grabAndFinish(); };
       if (typeof video.requestVideoFrameCallback === "function") {
-        video.requestVideoFrameCallback(() => grabAndFinish());
-      } else {
-        requestAnimationFrame(() => grabAndFinish());
+        video.requestVideoFrameCallback(() => grabOnce());
       }
+      // Safety net: fire ~150ms after the seek settles even if rVFC never does.
+      setTimeout(grabOnce, 150);
     });
     setTimeout(() => fail("Frame extraction timed out"), HARD_TIMEOUT_MS);
   });
