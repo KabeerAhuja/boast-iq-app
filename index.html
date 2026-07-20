@@ -4661,15 +4661,16 @@ function extractFrameAtSec(sec) {
 
     // Seeking a COLD, freshly-created element far into a long (~50min) file is
     // unreliable: the browser can fire `seeked` before the target range has
-    // actually decoded, handing back an early frame. So we (1) warm the decoder
-    // before the first seek, (2) verify the seek LANDED (currentTime AND the
-    // rVFC-reported paint time are close to target) before grabbing, and
-    // (3) re-seek a bounded number of times if it hasn't. Without this every game
-    // collapses to ~the first frame.
-    const TOL_LANDED = 0.5;        // s — currentTime must be within this of target
-    const TOL_PAINT = 1.0;         // s — rVFC mediaTime slack (keyframe/decode)
+    // decoded, handing back an early frame. So we verify the seek LANDED
+    // (currentTime within TOL of target) before grabbing, and re-seek a bounded
+    // number of times otherwise. A per-attempt watchdog guarantees we NEVER hang:
+    // if a (re)seek produces no `seeked` (e.g. the target is momentarily
+    // unreachable and setting currentTime is a no-op), we grab the best-available
+    // frame instead of stalling out the whole timeout.
+    const TOL_LANDED = 0.4;        // s — currentTime must be within this of target
     const MAX_RESEEKS = 3;
-    const HARD_TIMEOUT_MS = 20000; // cold far-seek in a long file needs headroom
+    const ATTEMPT_MS = 2500;       // per-seek watchdog before we grab best-effort
+    const HARD_TIMEOUT_MS = 15000; // absolute backstop
 
     const video = document.createElement("video");
     video.preload = "auto";
@@ -4685,8 +4686,10 @@ function extractFrameAtSec(sec) {
     document.body.appendChild(video);
     video.src = videoBlobUrl;
 
-    let settled = false, target = null, seekIssued = false, warmed = false, reseeks = 0;
+    let settled = false, target = null, seekIssued = false, reseeks = 0, attemptTimer = null;
+    const clearAttempt = () => { if (attemptTimer) { clearTimeout(attemptTimer); attemptTimer = null; } };
     const cleanup = () => {
+      clearAttempt();
       try { video.pause(); } catch (e) {}
       try { video.removeAttribute("src"); video.load(); } catch (e) {}
       try { video.remove(); } catch (e) {}
@@ -4714,49 +4717,39 @@ function extractFrameAtSec(sec) {
       const dur = video.duration || sec || 1;
       target = Math.max(0.05, Math.min(sec, dur - 0.05));
     };
-    const doSeek = () => { seekIssued = true; try { video.currentTime = target; } catch (e) {} };
-    const startSeekingWhenWarm = () => {
-      if (warmed || target == null) return;
-      warmed = true;
-      doSeek();  // decoder is ready → the first seek won't race an empty pipeline
+    const doSeek = () => {
+      seekIssued = true;
+      clearAttempt();
+      // If `seeked` never fires (no-op seek / unreachable target), grab whatever
+      // is currently painted rather than hanging.
+      attemptTimer = setTimeout(() => { if (!settled) grabAndFinish(); }, ATTEMPT_MS);
+      try { video.currentTime = target; } catch (e) {}
     };
 
     video.addEventListener("error", () => fail("Could not decode video locally"));
-    // Duration first (to clamp the target); seek only once a decoder is ready.
-    video.addEventListener("loadedmetadata", () => {
-      computeTarget();
-      if (video.readyState >= 3 /* HAVE_FUTURE_DATA */) startSeekingWhenWarm();
-    });
-    video.addEventListener("canplay", () => { if (target == null) computeTarget(); startSeekingWhenWarm(); });
+    // Seek as soon as we know the duration (to clamp the target). Do NOT gate on
+    // canplay — for large files it can be slow/unreliable and would stall us.
+    video.addEventListener("loadedmetadata", () => { computeTarget(); doSeek(); });
 
     video.addEventListener("seeked", () => {
       // Ignore any spurious `seeked` fired before we issued our own seek.
       if (!seekIssued || target == null) return;
+      clearAttempt();
 
       // Verify the seek actually LANDED. A premature seeked reports currentTime
-      // still far from target — re-issue rather than grab an early frame.
+      // still far from target — re-issue (currentTime differs, so a new `seeked`
+      // is guaranteed) rather than grab an early frame. Deadlock-free: bounded by
+      // MAX_RESEEKS, and the watchdog covers the no-op case.
       if (Math.abs(video.currentTime - target) > TOL_LANDED && reseeks++ < MAX_RESEEKS) {
         doSeek();
         return;
       }
 
-      const afterPaint = (meta) => {
-        // rVFC reports the TRUE presentation time of the frame about to be read.
-        // If it's still far from target the decoder hasn't caught up → re-seek.
-        if (meta && typeof meta.mediaTime === "number"
-            && Math.abs(meta.mediaTime - target) > TOL_PAINT
-            && reseeks++ < MAX_RESEEKS) {
-          doSeek();
-          return;
-        }
-        grabAndFinish();
-      };
-
       // Wait for the seeked frame to actually paint before reading it back.
       if (typeof video.requestVideoFrameCallback === "function") {
-        video.requestVideoFrameCallback((now, meta) => afterPaint(meta));
+        video.requestVideoFrameCallback(() => grabAndFinish());
       } else {
-        requestAnimationFrame(() => afterPaint(null));
+        requestAnimationFrame(() => grabAndFinish());
       }
     });
     setTimeout(() => fail("Frame extraction timed out"), HARD_TIMEOUT_MS);
