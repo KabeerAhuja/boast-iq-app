@@ -7685,6 +7685,10 @@ async function handleFile(file) {
       // Metadata is back from the server right after upload. If the source carried
       // no recording date, ask the user for it so the activity calendar is accurate.
       if (r) maybePromptCaptureDate(videoKey, r);
+      // The Select Players "video-meta" badge may have been rendered with zeros
+      // when the client-side grab failed (iOS); refresh it with the authoritative
+      // server dimensions/fps/duration now that prepare has folded them in.
+      refreshVideoMetaDisplay();
     });
     preparePromise.catch((err) => {
       console.warn("Background /api/prepare failed:", err);
@@ -8042,9 +8046,23 @@ document.getElementById("btn-continue-config").addEventListener("click", async (
   initMarkGames();
   showStep("markGames");
 });
+// Render the resolution/fps/duration badge on the Select Players screen from the
+// current videoMeta. Safe to call repeatedly — used to refresh the badge once the
+// server (prepare) supplies real numbers after a failed client-side grab (iOS).
+function refreshVideoMetaDisplay() {
+  const el = document.getElementById("video-meta");
+  if (!el) return;
+  const m = videoMeta || {};
+  if (!m.src_width && !m.src_fps && !m.duration_sec) {
+    el.innerHTML = `<span>Reading video…</span>`;
+    return;
+  }
+  el.innerHTML = `<span>${m.src_width || "—"}×${m.src_height || "—"}</span><span>${m.src_fps || "—"} fps</span><span>${m.duration_sec || "—"}s</span>`;
+}
+
 function setupFrameSelection(meta) {
   document.getElementById("player-names-display").innerHTML = `<span class="p1-name">${playerConfig.player_1.name} (${playerConfig.player_1.handedness[0].toUpperCase()})</span><span class="p2-name">${playerConfig.player_2.name} (${playerConfig.player_2.handedness[0].toUpperCase()})</span>`;
-  document.getElementById("video-meta").innerHTML = `<span>${meta.src_width}×${meta.src_height}</span><span>${meta.src_fps} fps</span><span>${meta.duration_sec}s</span>`;
+  refreshVideoMetaDisplay();
   const canvas = document.getElementById("frame-canvas"), ctx = canvas.getContext("2d");
   if (meta.frame_b64) {
     frameImage = new Image();
