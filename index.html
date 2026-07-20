@@ -4649,35 +4649,64 @@ function makeGameVideoKey(baseKey, gameIdx) {
 // Reuses the same hidden-<video>+canvas pattern as extractClientSideFrame but
 // seeks to a specific point instead of just t=0. Used to show the correct
 // start-of-game frame during per-game Select Players.
+//
+// iOS Safari notes: (1) drawing at exactly t=0 grabs a black frame, so we clamp
+// the seek target to a small positive offset; (2) drawImage must run AFTER the
+// seeked frame has actually painted, so we wait one requestVideoFrameCallback /
+// animation frame past `seeked`; (3) the <video> must be attached to the DOM and
+// laid out (not display:none / zero-size) for iOS to composite a readable frame.
 function extractFrameAtSec(sec) {
   return new Promise((resolve, reject) => {
     if (!videoBlobUrl) { reject(new Error("No local video to read from")); return; }
     const video = document.createElement("video");
     video.preload = "auto";
     video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    video.style.cssText =
+      "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;" +
+      "pointer-events:none;z-index:-1;";
+    document.body.appendChild(video);
     video.src = videoBlobUrl;
 
     let settled = false;
-    const fail = (msg) => { if (settled) return; settled = true; reject(new Error(msg)); };
-    const ok = (val) => { if (settled) return; settled = true; resolve(val); };
+    const cleanup = () => {
+      try { video.pause(); } catch (e) {}
+      try { video.removeAttribute("src"); video.load(); } catch (e) {}
+      try { video.remove(); } catch (e) {}
+    };
+    const fail = (msg) => { if (settled) return; settled = true; cleanup(); reject(new Error(msg)); };
+    const ok = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
 
-    video.addEventListener("error", () => fail("Could not decode video locally"));
-    video.addEventListener("loadedmetadata", () => {
-      const clamped = Math.max(0, Math.min(sec, (video.duration || sec) - 0.05));
-      try { video.currentTime = clamped; } catch (e) {}
-    });
-    video.addEventListener("seeked", () => {
+    const grabAndFinish = () => {
       const w = video.videoWidth, h = video.videoHeight;
       if (!w || !h) { fail("Video has no readable dimensions"); return; }
       const canvas = document.createElement("canvas");
       canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, w, h);
+      canvas.getContext("2d").drawImage(video, 0, 0, w, h);
       const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-      ok({ frame_b64, src_width: w, src_height: h });
+      ok({ frame_b64, src_width: w, src_height: h, looks_black: _meanLumaOfCanvas(canvas) < 10 });
+    };
+
+    video.addEventListener("error", () => fail("Could not decode video locally"));
+    video.addEventListener("loadedmetadata", () => {
+      // Never seek to exactly 0 (iOS paints black there); clamp to a small offset.
+      const dur = video.duration || sec || 1;
+      const clamped = Math.max(0.05, Math.min(sec, dur - 0.05));
+      try { video.currentTime = clamped; } catch (e) {}
     });
-    setTimeout(() => fail("Frame extraction timed out"), 8000);
+    video.addEventListener("seeked", () => {
+      // Wait for the seeked frame to actually paint before reading it back.
+      if (typeof video.requestVideoFrameCallback === "function") {
+        video.requestVideoFrameCallback(() => grabAndFinish());
+      } else {
+        requestAnimationFrame(() => grabAndFinish());
+      }
+    });
+    setTimeout(() => fail("Frame extraction timed out"), 9000);
   });
 }
 
@@ -7219,87 +7248,161 @@ let uploadPromise = null;
 let uploadAbort = null;
 let preparePromise = null;
 
+// Downscale a canvas and return its mean luma (0-255). Used to detect a
+// black/blank grab so we never treat one as a good frame. Returns 255 on a
+// CORS/read error so we don't false-positive a real frame as black.
+function _meanLumaOfCanvas(canvas) {
+  try {
+    const s = document.createElement("canvas");
+    s.width = 24; s.height = 24;
+    const sctx = s.getContext("2d");
+    sctx.drawImage(canvas, 0, 0, 24, 24);
+    const d = sctx.getImageData(0, 0, 24, 24).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+    return sum / (d.length / 4);
+  } catch (e) { return 255; }
+}
+
 // Extract metadata + first frame from a local File using a hidden <video> element.
-// Returns { frame_b64, frame_blob, src_width, src_height, src_fps, total_frames, duration_sec }.
+// Returns { frame_b64, frame_blob, looks_black, src_width, src_height, src_fps, total_frames, duration_sec }.
 // fps is measured via requestVideoFrameCallback when available; otherwise falls back to 30.
+//
+// IMPORTANT (iOS Safari): drawing on the `seeked` event at t=0 grabs a BLACK
+// frame on iPhone/iPad — Safari fires `seeked` before the decoder has painted a
+// real frame into the element, and setting currentTime=0 when it's already 0 may
+// never fire `seeked` at all (hanging the whole upload flow). So when
+// requestVideoFrameCallback is available we play the video muted-inline and
+// capture the first *actually painted* frame — the only reliable way to get a
+// non-black first frame on iOS — with hard timeouts so we never hang.
 function extractClientSideFrame(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
     video.preload = "auto";
     video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
+    // iOS honors the attributes (not just the properties) for inline autoplay.
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    // iOS Safari will NOT reliably paint a decoded frame that can be read back
+    // via drawImage unless the <video> is attached to the document and laid out.
+    // Keep it effectively invisible but still "rendered" (not display:none / not
+    // zero-size, both of which stop iOS from compositing frames).
+    video.style.cssText =
+      "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;" +
+      "pointer-events:none;z-index:-1;";
+    document.body.appendChild(video);
     video.src = url;
 
     let settled = false;
-    const cleanup = () => { try { URL.revokeObjectURL(url); } catch (e) {} };
+    const cleanup = () => {
+      try { video.pause(); } catch (e) {}
+      try { video.removeAttribute("src"); video.load(); } catch (e) {}
+      try { video.remove(); } catch (e) {}
+      try { URL.revokeObjectURL(url); } catch (e) {}
+    };
     const fail = (msg) => { if (settled) return; settled = true; cleanup(); reject(new Error(msg)); };
-    const ok = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
 
-    video.addEventListener("error", () => fail("Could not decode video locally"));
-    video.addEventListener("loadedmetadata", () => {
-      // Seek to t=0 to guarantee a real first frame is available.
-      try { video.currentTime = 0; } catch (e) { /* some browsers throw before metadata */ }
-    });
-    video.addEventListener("seeked", async () => {
-      const w = video.videoWidth, h = video.videoHeight, duration = video.duration || 0;
-      if (!w || !h) { fail("Video has no readable dimensions"); return; }
+    const finish = (canvas, fps) => {
+      if (settled) return; settled = true;
+      const w = canvas.width, h = canvas.height, duration = video.duration || 0;
+      const total_frames = Math.max(1, Math.round(duration * fps));
+      const looks_black = _meanLumaOfCanvas(canvas) < 10;
+      const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+      canvas.toBlob((frame_blob) => {
+        cleanup();
+        resolve({
+          frame_b64,
+          frame_blob,
+          looks_black,
+          src_width: w,
+          src_height: h,
+          src_fps: Math.round(fps * 100) / 100,
+          total_frames,
+          duration_sec: Math.round(duration * 100) / 100,
+        });
+      }, "image/jpeg", 0.85);
+    };
+
+    const grab = () => {
+      const w = video.videoWidth, h = video.videoHeight;
+      if (!w || !h) return null;
       const canvas = document.createElement("canvas");
       canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, w, h);
+      canvas.getContext("2d").drawImage(video, 0, 0, w, h);
+      return canvas;
+    };
 
-      // Measure fps using requestVideoFrameCallback (sample ~8 frames). Falls back to 30.
-      let fps = 30;
-      if (typeof video.requestVideoFrameCallback === "function") {
-        try {
-          fps = await measureFpsViaCallback(video);
-        } catch (e) { /* keep 30 */ }
-      }
+    video.addEventListener("error", () => fail("Could not decode video locally"));
 
-      const total_frames = Math.max(1, Math.round(duration * fps));
-      const frame_b64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-      const frame_blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
-
-      ok({
-        frame_b64,
-        frame_blob,
-        src_width: w,
-        src_height: h,
-        src_fps: Math.round(fps * 100) / 100,
-        total_frames,
-        duration_sec: Math.round(duration * 100) / 100,
+    // Preferred path (incl. iOS): capture the first painted frame + measure fps
+    // in a single requestVideoFrameCallback loop.
+    if (typeof video.requestVideoFrameCallback === "function") {
+      let frameCanvas = null;
+      const samples = [];
+      let lastMediaTime = null;
+      const tick = (_now, metadata) => {
+        if (settled) return;
+        // The first callback guarantees a real frame has been rendered.
+        if (!frameCanvas) {
+          frameCanvas = grab();
+          if (!frameCanvas) { fail("Video has no readable dimensions"); return; }
+        }
+        const t = metadata.mediaTime;
+        if (lastMediaTime !== null) {
+          const dt = t - lastMediaTime;
+          if (dt > 0 && dt < 0.5) samples.push(dt);
+        }
+        lastMediaTime = t;
+        if (samples.length < 8) {
+          video.requestVideoFrameCallback(tick);
+        } else {
+          samples.sort((a, b) => a - b);
+          const med = samples[Math.floor(samples.length / 2)];
+          finish(frameCanvas, med > 0 ? 1 / med : 30);
+        }
+      };
+      video.addEventListener("loadedmetadata", () => {
+        video.play().catch(() => {});
+        video.requestVideoFrameCallback(tick);
       });
+      // If we got a frame but fps sampling stalled, finish with the frame @ 30fps.
+      setTimeout(() => { if (!settled && frameCanvas) finish(frameCanvas, 30); }, 4000);
+      // If nothing painted at all, bail so the caller can fall back to the server.
+      setTimeout(() => { if (!settled) fail("Timed out reading video"); }, 9000);
+      return;
+    }
+
+    // Fallback (no requestVideoFrameCallback): seek slightly past 0 and draw on
+    // `seeked`. The small offset dodges the black-frame-at-exactly-0 case.
+    video.addEventListener("loadedmetadata", () => {
+      try { video.currentTime = 0.05; } catch (e) { /* some browsers throw pre-metadata */ }
     });
+    video.addEventListener("seeked", () => {
+      const canvas = grab();
+      if (!canvas) { fail("Video has no readable dimensions"); return; }
+      finish(canvas, 30);
+    });
+    setTimeout(() => { if (!settled) fail("Timed out reading video"); }, 9000);
   });
 }
 
-function measureFpsViaCallback(video) {
-  return new Promise((resolve) => {
-    const samples = [];
-    let lastMediaTime = null;
-    const playPromise = video.play().catch(() => {});
-    const tick = (_now, metadata) => {
-      const t = metadata.mediaTime;
-      if (lastMediaTime !== null) {
-        const dt = t - lastMediaTime;
-        if (dt > 0 && dt < 0.5) samples.push(dt);
-      }
-      lastMediaTime = t;
-      if (samples.length < 8) {
-        video.requestVideoFrameCallback(tick);
-      } else {
-        try { video.pause(); video.currentTime = 0; } catch (e) {}
-        // Median interval for robustness to outliers.
-        samples.sort((a, b) => a - b);
-        const med = samples[Math.floor(samples.length / 2)];
-        resolve(med > 0 ? 1 / med : 30);
-      }
-    };
-    Promise.resolve(playPromise).then(() => video.requestVideoFrameCallback(tick));
-    // Hard timeout in case the browser stalls.
-    setTimeout(() => resolve(30), 4000);
-  });
+// Ask the backend to extract an authoritative first_frame.png server-side from
+// the uploaded MP4. Fire-and-forget; used when the browser grab is black/missing
+// (iOS Safari). The backend writes first_frame.png + thumbnailPath itself.
+function triggerServerFirstFrame(videoKeyArg, gcsPath) {
+  try {
+    fetch(`${API}/api/extract-first-frame`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_key: videoKeyArg, gcs_path: gcsPath || "" }),
+    }).catch((e) => console.warn("server first-frame request failed:", e));
+  } catch (e) { console.warn("server first-frame request failed:", e); }
 }
 
 // XHR PUT to a signed URL with progress events. Returns a Promise plus an abort handle.
@@ -7400,22 +7503,27 @@ async function handleFile(file) {
   progText.textContent = "Reading video...";
 
   // 2) Extract first frame + metadata client-side (no backend dependency).
-  let clientMeta;
+  //    Client extraction is unreliable on iOS Safari (black/hung grabs), so a
+  //    failure here is NOT fatal: we still proceed and let the backend extract
+  //    an authoritative first_frame.png from the uploaded MP4. Missing metadata
+  //    (fps/dimensions/total_frames) is refilled by /api/prepare below.
+  let clientMeta = null;
   try {
     clientMeta = await extractClientSideFrame(file);
   } catch (err) {
-    progText.textContent = `Could not read video: ${err.message}`;
-    progText.style.color = "var(--red)";
-    updateVideoStatus(videoKey, "failed");
-    return;
+    console.warn("Client-side frame extraction failed; falling back to server:", err);
   }
+  const clientFrameOk = !!(clientMeta && clientMeta.frame_b64 && !clientMeta.looks_black);
   videoMeta = {
-    frame_b64: clientMeta.frame_b64,
-    src_width: clientMeta.src_width,
-    src_height: clientMeta.src_height,
-    src_fps: clientMeta.src_fps,
-    total_frames: clientMeta.total_frames,
-    duration_sec: clientMeta.duration_sec,
+    frame_b64: clientFrameOk ? clientMeta.frame_b64 : null,
+    src_width: (clientMeta && clientMeta.src_width) || 0,
+    src_height: (clientMeta && clientMeta.src_height) || 0,
+    src_fps: (clientMeta && clientMeta.src_fps) || 0,
+    total_frames: (clientMeta && clientMeta.total_frames) || 0,
+    duration_sec: (clientMeta && clientMeta.duration_sec) || 0,
+    // When the local grab is black/missing, the tagging step recovers the frame
+    // from the server-extracted first_frame.png instead.
+    needs_server_frame: !clientFrameOk,
   };
 
   // 3) Move the user straight into Player Information — no waiting on backend.
@@ -7503,17 +7611,25 @@ async function handleFile(file) {
     track("Upload Completed", { video_key: videoKey });
     await updateVideoStatus(videoKey, "ready");
 
-    // Fire-and-forget: write the client-extracted first frame to GCS so the
-    // admin landmark-tagging UI can pick it up without waiting for the GPU.
-    try {
-      if (clientMeta.frame_blob) {
+    // Persist a first_frame.png for the admin landmark-tagging UI + My Videos
+    // thumbnail. Prefer the client-extracted frame, but only when it's a real
+    // (non-black) grab; on iOS the browser frame is often black/missing, so we
+    // ask the backend to extract an authoritative frame from the uploaded MP4.
+    if (clientFrameOk && clientMeta.frame_blob) {
+      try {
         await uploadBytes(
           ref(fbStorage, `video-data/${videoKey}/first_frame.png`),
           clientMeta.frame_blob,
           { contentType: "image/jpeg" }
         );
+      } catch (err) {
+        console.warn("First frame upload failed; requesting server extraction:", err);
+        triggerServerFirstFrame(videoKey, firebasePath);
       }
-    } catch (err) { console.warn("First frame upload failed:", err); }
+    } else {
+      console.warn("Client first frame black/missing — using server-side extraction");
+      triggerServerFirstFrame(videoKey, firebasePath);
+    }
 
     // Kick off /api/prepare in the background NOW, while the user is tagging
     // players. The backend spawns prepare_job and returns immediately with a
@@ -7930,9 +8046,21 @@ function setupFrameSelection(meta) {
   document.getElementById("player-names-display").innerHTML = `<span class="p1-name">${playerConfig.player_1.name} (${playerConfig.player_1.handedness[0].toUpperCase()})</span><span class="p2-name">${playerConfig.player_2.name} (${playerConfig.player_2.handedness[0].toUpperCase()})</span>`;
   document.getElementById("video-meta").innerHTML = `<span>${meta.src_width}×${meta.src_height}</span><span>${meta.src_fps} fps</span><span>${meta.duration_sec}s</span>`;
   const canvas = document.getElementById("frame-canvas"), ctx = canvas.getContext("2d");
-  frameImage = new Image();
-  frameImage.onload = () => { canvas.width = frameImage.width; canvas.height = frameImage.height; drawFrame(ctx, frameImage); };
-  frameImage.src = "data:image/jpeg;base64," + meta.frame_b64;
+  if (meta.frame_b64) {
+    frameImage = new Image();
+    frameImage.onload = () => { canvas.width = frameImage.width; canvas.height = frameImage.height; drawFrame(ctx, frameImage); };
+    frameImage.src = "data:image/jpeg;base64," + meta.frame_b64;
+  } else {
+    // No local frame (black/missing grab on iOS). Show a neutral placeholder; the
+    // caller's recoverTaggingFrameFromServer() swaps in the real frame shortly.
+    frameImage = null;
+    canvas.width = meta.src_width || 640;
+    canvas.height = meta.src_height || 360;
+    ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#bbb"; ctx.font = "16px Inter"; ctx.textAlign = "center";
+    ctx.fillText("Preparing first frame…", canvas.width / 2, canvas.height / 2);
+    ctx.textAlign = "start";
+  }
   setActivePlayer(1);
   if (!canvas.dataset.wired) {
     canvas.addEventListener("click", (e) => onFrameClick(e, canvas, ctx));
@@ -7944,7 +8072,7 @@ function setupFrameSelection(meta) {
 let activePlayer = 1;
 function setActivePlayer(n) { activePlayer = n; updatePointBadges(); }
 function onFrameClick(e, canvas, ctx) { const rect = canvas.getBoundingClientRect(); const x = Math.round((e.clientX - rect.left) * (canvas.width / rect.width)); const y = Math.round((e.clientY - rect.top) * (canvas.height / rect.height)); if (activePlayer === 2) { player2 = [x, y]; } else { player1 = [x, y]; } drawFrame(ctx, frameImage); updatePointBadges(); }
-function drawFrame(ctx, img) { ctx.drawImage(img, 0, 0); if (player1) drawPoint(ctx, player1, "#f05050", playerConfig.player_1.name.substring(0, 8)); if (player2) drawPoint(ctx, player2, "#5080f0", playerConfig.player_2.name.substring(0, 8)); }
+function drawFrame(ctx, img) { if (img) { ctx.drawImage(img, 0, 0); } if (player1) drawPoint(ctx, player1, "#f05050", playerConfig.player_1.name.substring(0, 8)); if (player2) drawPoint(ctx, player2, "#5080f0", playerConfig.player_2.name.substring(0, 8)); }
 function drawPoint(ctx, pt, color, label) { ctx.beginPath(); ctx.arc(pt[0], pt[1], 14, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.stroke(); ctx.shadowColor = color; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = "#fff"; ctx.font = "bold 14px Inter"; ctx.fillText(label, pt[0] + 20, pt[1] + 5); }
 function updatePointBadges() { const b1 = document.getElementById("p1-badge"), b2 = document.getElementById("p2-badge"); const p1Label = playerConfig.player_1.name.substring(0, 10), p2Label = playerConfig.player_2.name.substring(0, 10); b1.textContent = player1 ? `${p1Label}: ✓ placed` : (activePlayer === 1 ? `${p1Label}: tap frame` : `${p1Label}: tap to set`); b1.className = `point-badge p1 ${player1 ? "set" : "unset"}${activePlayer === 1 ? " active" : ""}`; b2.textContent = player2 ? `${p2Label}: ✓ placed` : (activePlayer === 2 ? `${p2Label}: tap frame` : `${p2Label}: tap to set`); b2.className = `point-badge p2 ${player2 ? "set" : "unset"}${activePlayer === 2 ? " active" : ""}`; document.getElementById("btn-start").disabled = !(player1 && player2); }
 document.getElementById("p1-badge").addEventListener("click", () => setActivePlayer(1));
@@ -8119,17 +8247,25 @@ async function beginPlayerClickForGame(idx) {
   mgContinueBtn.disabled = true;
   mgContinueBtn.textContent = "Loading frame...";
 
-  let frame_b64;
+  let frame_b64 = null;
+  let looksBlack = false;
   try {
     const res = await extractFrameAtSec(seg.startSec);
     frame_b64 = res.frame_b64;
+    looksBlack = !!res.looks_black;
   } catch (err) {
     console.warn("Frame extract failed, falling back to first frame:", err);
     frame_b64 = videoMeta.frame_b64;  // Fallback to the frame we already have
+    // If even the first frame is missing/black (iOS), we'll recover from server.
+    looksBlack = !frame_b64 || !!videoMeta.needs_server_frame;
   } finally {
     mgContinueBtn.disabled = false;
     mgContinueBtn.textContent = savedLabel;
   }
+
+  // Only single-game uses seg.startSec≈first frame; for that case a black/missing
+  // local grab can be replaced by the authoritative server-extracted first frame.
+  const canRecoverFromServer = gameSegments.length === 1 && (looksBlack || !frame_b64);
 
   videoMeta = { ...videoMeta, frame_b64 };
 
@@ -8153,6 +8289,71 @@ async function beginPlayerClickForGame(idx) {
 
   setupFrameSelection(videoMeta);
   showStep("select");
+
+  // Last-resort recovery: the local grab was black/missing (typically iOS). Pull
+  // the authoritative first_frame.png the backend extracts from the uploaded MP4
+  // and swap it into the tagging canvas once it's ready.
+  if (canRecoverFromServer) recoverTaggingFrameFromServer();
+}
+
+// Fetch the server-extracted first_frame.png and paint it into the tagging
+// canvas, replacing a black/missing local grab. Waits for the source upload to
+// land (so the backend can read the MP4), kicks off server extraction, then
+// polls Firebase Storage for the resulting PNG.
+async function recoverTaggingFrameFromServer() {
+  const targetKey = videoKey;   // capture in case the user starts another upload
+  const targetPath = firebasePath;
+  try {
+    const canvas = document.getElementById("frame-canvas");
+    const ctx = canvas && canvas.getContext("2d");
+    if (ctx && canvas) {
+      // Neutral "preparing" placeholder so the user doesn't stare at a black box.
+      canvas.width = canvas.width || 640;
+      canvas.height = canvas.height || 360;
+      ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#bbb"; ctx.font = "16px Inter"; ctx.textAlign = "center";
+      ctx.fillText("Preparing first frame…", canvas.width / 2, canvas.height / 2);
+      ctx.textAlign = "start";
+    }
+    // The backend needs the uploaded MP4 before it can extract a real frame.
+    if (uploadPromise) { try { await uploadPromise; } catch (e) {} }
+    if (videoKey !== targetKey) return;  // a newer upload superseded this one
+    triggerServerFirstFrame(targetKey, targetPath);
+
+    const storagePath = `video-data/${targetKey}/first_frame.png`;
+    for (let attempt = 0; attempt < 30; attempt++) {   // ~60s of polling
+      await new Promise((r) => setTimeout(r, 2000));
+      if (videoKey !== targetKey) return;
+      let url;
+      try {
+        url = await getDownloadURL(ref(fbStorage, storagePath));
+      } catch (e) { continue; }  // not written yet — keep polling
+      const loaded = await new Promise((resolve) => {
+        // No crossOrigin: we only display the frame (drawImage) and read click
+        // geometry, never pixel data — so a tainted canvas is fine, and we avoid
+        // depending on bucket CORS being configured for GET.
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = url + (url.includes("?") ? "&" : "?") + "cb=" + attempt;
+      });
+      if (!loaded) continue;
+      if (videoKey !== targetKey) return;
+      // Repaint the tagging canvas with the authoritative frame and re-wire clicks.
+      frameImage = loaded;
+      const canvas2 = document.getElementById("frame-canvas");
+      const ctx2 = canvas2 && canvas2.getContext("2d");
+      if (canvas2 && ctx2) {
+        canvas2.width = loaded.width;
+        canvas2.height = loaded.height;
+        drawFrame(ctx2, frameImage);
+      }
+      return;
+    }
+    console.warn("Server first-frame recovery timed out for", targetKey);
+  } catch (e) {
+    console.warn("Server first-frame recovery failed:", e);
+  }
 }
 
 async function onSelectStartClick() {
