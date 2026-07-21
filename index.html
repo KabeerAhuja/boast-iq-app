@@ -5589,6 +5589,9 @@ async function loadHomeFeed(){
   host.innerHTML = '<div class="home-placeholder">Finding your hardest rallies…</div>';
   try{
     const snap = await getDocs(query(collection(fbFirestore,"videos"), where("accessUids","array-contains",currentUser.uid), orderBy("createdAt","desc")));
+    // Keep every doc (incl. hidden multi-game parents) so game docs can fall
+    // back to the parent's playerConfig for names.
+    const feedDocMap={}; snap.docs.forEach(d=>{ feedDocMap[d.id]=d.data(); });
     const vids = snap.docs.map(d=>({id:d.id,data:d.data()}))
       .filter(v=>!v.data.hiddenFromList && !((v.data.hiddenFor||[]).includes(currentUser.uid)) && v.data.status==="complete")
       .slice(0,12);
@@ -5599,9 +5602,13 @@ async function loadHomeFeed(){
         if(!idx) return;
         const mpp=(idx.match_summary||{}).movementPerPoint||[];
         const dur={}; (idx.points||[]).forEach(p=>{dur[p.point_number]=p.duration_sec;});
-        const pc=v.data.playerConfig||{};
-        const p1=(idx.player_1&&idx.player_1.name)||(pc.player_1&&pc.player_1.name)||"Player 1";
-        const p2=(idx.player_2&&idx.player_2.name)||(pc.player_2&&pc.player_2.name)||"Player 2";
+        // Name precedence: user-entered playerConfig on the game doc, then the
+        // parent doc's playerConfig, then index.json (ignoring its defaults).
+        const pcg=v.data.playerConfig||{};
+        const ppc=((v.data.parentVideoKey&&feedDocMap[v.data.parentVideoKey])||{}).playerConfig||{};
+        const real=n=>(n&&!/^player\s*\d$/i.test(String(n).trim()))?n:null;
+        const p1=real(pcg.player_1&&pcg.player_1.name)||real(ppc.player_1&&ppc.player_1.name)||real(idx.player_1&&idx.player_1.name)||"Player 1";
+        const p2=real(pcg.player_2&&pcg.player_2.name)||real(ppc.player_2&&ppc.player_2.name)||real(idx.player_2&&idx.player_2.name)||"Player 2";
         let dateLabel="";
         try{
           const dt=v.data.captureDate?new Date(v.data.captureDate):(v.data.createdAt&&v.data.createdAt.toDate?v.data.createdAt.toDate():null);
@@ -5794,6 +5801,9 @@ document.getElementById("bottomnav-fab").addEventListener("click", () => showSte
 // ---- My Videos list ----
 // In-memory holder so the coach filter can re-render without re-querying.
 let myVideosCache = [];
+// Every doc from the last library query (incl. hidden parents) — used to fall
+// back to the parent's playerConfig for player-name rows on game cards.
+let myVideosDocMap = {};
 let myVideosFilter = "all"; // "all" | "mine" | "shared"
 let myVideosDateFilter = null; // "YYYY-MM-DD" set when navigating from the calendar
 
@@ -5822,6 +5832,8 @@ async function loadMyVideos() {
     // Also drop videos this user soft-deleted: `hiddenFor` holds the uids that
     // removed the video from their own dashboard — the doc (and its Storage
     // files) stay in Firebase; it's just hidden per-user.
+    myVideosDocMap = {};
+    snap.docs.forEach((d) => { myVideosDocMap[d.id] = d.data(); });
     myVideosCache = snap.docs
       .map((d) => ({ id: d.id, data: d.data() }))
       .filter(({ data }) => !data.hiddenFromList)
@@ -6003,8 +6015,10 @@ async function renderMatchGroupCard(parentKey, games) {
   body.appendChild(titleEl);
   // Player names row with colored dots (mockup parity)
   {
-    const pc = (first.data && first.data.playerConfig) || {};
-    const n1 = pc.player_1 && pc.player_1.name, n2 = pc.player_2 && pc.player_2.name;
+    const pcA = (first.data && first.data.playerConfig) || {};
+    const pcB = ((parentKey && myVideosDocMap[parentKey]) || {}).playerConfig || {};
+    const n1 = (pcA.player_1 && pcA.player_1.name) || (pcB.player_1 && pcB.player_1.name);
+    const n2 = (pcA.player_2 && pcA.player_2.name) || (pcB.player_2 && pcB.player_2.name);
     if (n1 || n2) {
       const pl = document.createElement("div");
       pl.className = "vplayers";
@@ -6322,8 +6336,10 @@ async function renderVideoCard(videoKeyId, data) {
   body.appendChild(titleEl);
   // Player names row with colored dots (mockup parity)
   {
-    const pc = data.playerConfig || {};
-    const n1 = pc.player_1 && pc.player_1.name, n2 = pc.player_2 && pc.player_2.name;
+    const pcA = data.playerConfig || {};
+    const pcB = ((data.parentVideoKey && myVideosDocMap[data.parentVideoKey]) || {}).playerConfig || {};
+    const n1 = (pcA.player_1 && pcA.player_1.name) || (pcB.player_1 && pcB.player_1.name);
+    const n2 = (pcA.player_2 && pcA.player_2.name) || (pcB.player_2 && pcB.player_2.name);
     if (n1 || n2) {
       const pl = document.createElement("div");
       pl.className = "vplayers";
