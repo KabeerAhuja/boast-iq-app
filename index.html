@@ -5475,6 +5475,7 @@ async function loadHomeFeed(){
     const top=pts.slice(0,8);
     if(!top.length){ host.innerHTML='<div class="home-placeholder">No 10-second+ rallies yet. Upload a match to see your top-pressure points.</div>'; return; }
     host.innerHTML="";
+    const feedCards=[];
     top.forEach(p=>{
       const card=document.createElement("article");
       card.className="feed-card";
@@ -5484,24 +5485,64 @@ async function loadHomeFeed(){
         '<div class="feed-body"><div class="feed-heat"><div class="feed-heat-cap">Court movement</div><div class="feed-heat-svg"></div><div class="feed-heat-names"><span>'+feedEsc(feedFirst(p.p1))+'</span><span>'+feedEsc(feedFirst(p.p2))+'</span></div></div>'+
         '<div><div class="feed-stat-l">Pressure applied</div><div class="feed-press"><div class="row"><span class="num p1">'+p.prP1+'</span><span class="u">/100</span><span class="nm">'+feedEsc(feedFirst(p.p1))+'</span></div><div class="row"><span class="num p2">'+p.prP2+'</span><span class="u">/100</span><span class="nm">'+feedEsc(feedFirst(p.p2))+'</span></div></div></div></div>';
       host.appendChild(card);
-      hydrateFeedCard(card,p);
+      feedCards.push([card,p]);
     });
+    // Load order: the first card hydrates immediately (instant playback); the
+    // rest hydrate as they approach the viewport.
+    hydrateFeedCard(feedCards[0][0], feedCards[0][1], true);
+    if ("IntersectionObserver" in window && feedCards.length > 1) {
+      const io = new IntersectionObserver((ents)=>{ ents.forEach(en=>{
+        if(!en.isIntersecting) return;
+        io.unobserve(en.target);
+        const i=+en.target.dataset.feedIdx;
+        hydrateFeedCard(feedCards[i][0], feedCards[i][1], false);
+      }); }, {rootMargin:"900px 0px"});
+      feedCards.slice(1).forEach(([c],j)=>{ c.dataset.feedIdx=String(j+1); io.observe(c); });
+    } else {
+      feedCards.slice(1).forEach(([c,p])=>hydrateFeedCard(c,p,false));
+    }
   }catch(e){ console.warn("home feed failed",e); host.innerHTML='<div class="home-placeholder">Couldn\'t load your feed right now.</div>'; homeFeedLoaded=false; }
 }
-async function hydrateFeedCard(card,p){
+async function hydrateFeedCard(card,p,eager){
+  // Point JSON gives the heatmap track AND the rally's absolute start/end times.
+  let start=0,end=(p.dur||10);
   try{
     const r=await fetch(`${API}/api/points/${encodeURIComponent(p.key)}/${p.pn}`);
-    if(r.ok){ const pd=await r.json(); const sh=card.querySelector(".feed-heat-svg"); if(sh) sh.innerHTML=feedCourtHeat(feedTrack(pd.movement||{})); }
+    if(r.ok){ const pd=await r.json();
+      const sh=card.querySelector(".feed-heat-svg"); if(sh) sh.innerHTML=feedCourtHeat(feedTrack(pd.movement||{}));
+      if(pd.start_time_sec!=null) start=+pd.start_time_sec;
+      end=(pd.end_time_sec!=null)?+pd.end_time_sec:start+(p.dur||10);
+    }
   }catch(_){}
+  const media=card.querySelector(".feed-media");
+  const badges=media.querySelector(".feed-badges");
+  const badgesHTML=badges?badges.outerHTML:"";
+  const s0=Math.max(0,start-0.4), s1=end+0.4;
+  // Stream the raw upload directly at the rally's timestamp — instant via HTTP
+  // range requests (uploads are normalized to H.264+faststart). Multi-game keys
+  // stream the parent raw (point times are absolute in the parent). No
+  // server-side clip render in the hot path.
   try{
-    const r=await fetch(`${API}/api/clip/${encodeURIComponent(p.key)}/${p.pn}`);
-    const c=r.ok?await r.json():null;
-    const media=card.querySelector(".feed-media");
-    const badges=media.querySelector(".feed-badges");
-    const badgesHTML=badges?badges.outerHTML:'';
-    if(c&&c.url){ media.innerHTML='<video src="'+c.url+'" autoplay muted loop playsinline preload="metadata"></video>'+badgesHTML; }
-    else { const po=media.querySelector(".feed-poster"); if(po) po.textContent="Clip unavailable"; }
-  }catch(_){ const po=card.querySelector(".feed-poster"); if(po) po.textContent="Clip unavailable"; }
+    const rawKey=p.key.replace(/__g\d+$/,"");
+    const src=await getDownloadURL(ref(fbStorage,`uploaded-videos/${rawKey}.mp4`));
+    const v=document.createElement("video");
+    v.muted=true; v.playsInline=true; v.autoplay=true; v.loop=false;
+    v.preload=eager?"auto":"metadata";
+    v.src=src+"#t="+s0.toFixed(1);
+    v.addEventListener("loadedmetadata",()=>{ try{ v.currentTime=s0; }catch(_){} });
+    v.addEventListener("timeupdate",()=>{ if(v.currentTime>=s1){ v.currentTime=s0; v.play().catch(()=>{}); } });
+    media.innerHTML=""; media.appendChild(v);
+    media.insertAdjacentHTML("beforeend",badgesHTML);
+    v.play().catch(()=>{});
+  }catch(e){
+    // Fallback: the server-rendered clip (cached once rendered).
+    try{
+      const r=await fetch(`${API}/api/clip/${encodeURIComponent(p.key)}/${p.pn}`);
+      const c=r.ok?await r.json():null;
+      if(c&&c.url){ media.innerHTML='<video src="'+c.url+'" autoplay muted loop playsinline preload="metadata"></video>'+badgesHTML; return; }
+    }catch(_){}
+    const po=media.querySelector(".feed-poster"); if(po) po.textContent="Clip unavailable";
+  }
 }
 // Wire the tab-nav shell (logo, tabs, upload +) to the existing views.
 document.getElementById("brand-home").addEventListener("click", goHome);
