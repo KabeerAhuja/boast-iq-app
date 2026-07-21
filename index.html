@@ -3905,8 +3905,11 @@
   /* ===== Feed video player: progress + tap ===== */
   .feed-media video{cursor:pointer;}
   .feed-badges{pointer-events:none;}
-  .feed-progress{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,0.14);z-index:2;pointer-events:none;}
+  .feed-progress{position:absolute;left:0;right:0;bottom:0;height:16px;z-index:3;cursor:pointer;display:flex;align-items:flex-end;background:linear-gradient(to top, rgba(0,0,0,0.35), transparent);touch-action:none;}
+  .feed-progress .fp-track{height:3px;width:100%;background:rgba(255,255,255,0.18);transition:height .12s;}
+  .feed-progress:hover .fp-track{height:6px;}
   .feed-progress i{display:block;height:100%;width:0%;background:var(--accent);transition:width .12s linear;}
+  .feed-progress.scrubbing i{transition:none;}
 </style>
 <!-- Stripe.js — powers the embedded card fields in the upgrade modal -->
 <script src="https://js.stripe.com/v3/"></script>
@@ -5739,16 +5742,34 @@ const feedPlayObserver = ("IntersectionObserver" in window)
   : null;
 
 function setupFeedVideo(media, v){
-  // Thin progress bar along the bottom of the viewer (tracks the rally window).
+  // Thin progress bar along the bottom of the viewer (tracks the rally window)
+  // — click or drag it to scrub within the point.
   const bar=document.createElement("div");
-  bar.className="feed-progress"; bar.innerHTML="<i></i>";
+  bar.className="feed-progress"; bar.innerHTML='<div class="fp-track"><i></i></div>';
   media.appendChild(bar);
-  const fill=bar.firstChild;
-  v.addEventListener("timeupdate",()=>{
+  const fill=bar.querySelector("i");
+  const span=()=>{
     const s0=parseFloat(v.dataset.s0||"0");
     const s1=parseFloat(v.dataset.s1||"")||v.duration||0;
+    return [s0,s1];
+  };
+  v.addEventListener("timeupdate",()=>{
+    const [s0,s1]=span();
     if(s1>s0) fill.style.width=Math.max(0,Math.min(100,(v.currentTime-s0)/(s1-s0)*100))+"%";
   });
+  const seekTo=(clientX)=>{
+    const r=bar.getBoundingClientRect();
+    const ratio=Math.max(0,Math.min(0.995,(clientX-r.left)/Math.max(1,r.width)));
+    const [s0,s1]=span();
+    if(s1>s0){ v.currentTime=s0+ratio*(s1-s0); fill.style.width=(ratio*100)+"%"; }
+  };
+  let scrubbing=false;
+  bar.addEventListener("pointerdown",(e)=>{ e.stopPropagation(); scrubbing=true; bar.classList.add("scrubbing"); try{bar.setPointerCapture(e.pointerId);}catch(_){} seekTo(e.clientX); });
+  bar.addEventListener("pointermove",(e)=>{ if(scrubbing) seekTo(e.clientX); });
+  const endScrub=()=>{ scrubbing=false; bar.classList.remove("scrubbing"); };
+  bar.addEventListener("pointerup",endScrub);
+  bar.addEventListener("pointercancel",endScrub);
+  bar.addEventListener("click",(e)=>e.stopPropagation());
   // Tap the video to pause/resume.
   v.addEventListener("click",()=>{
     if(v.paused){ v.dataset.userPaused="0"; v.play().catch(()=>{}); }
