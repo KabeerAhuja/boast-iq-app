@@ -5419,6 +5419,9 @@ function goHome(){
 // (per-point pressure via match_summary.movementPerPoint) and /api/clip.
 let homeFeedLoaded = false;
 function feedEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+// First name for display — but keep default labels ("Player 1") whole so they
+// don't shorten to a meaningless "Player".
+function feedFirst(n){ n=String(n||""); return /^player\s*\d/i.test(n) ? n : n.split(" ")[0]; }
 function feedTrack(mv){
   const CW=6.4,CH=9.75,out={};
   for(const who of ['player_1','player_2']){
@@ -5478,8 +5481,8 @@ async function loadHomeFeed(){
       card.innerHTML=
         '<div class="feed-card-head"><span class="feed-dot p1"></span>'+feedEsc(p.p1)+'<span class="vs">vs</span><span class="feed-dot p2"></span>'+feedEsc(p.p2)+'</div>'+
         '<div class="feed-media"><div class="feed-poster">Loading clip…</div><div class="feed-badges"><span class="feed-badge">Pressure '+p.pressure+'</span><span class="feed-badge">'+p.dur.toFixed(1)+'s rally</span></div></div>'+
-        '<div class="feed-body"><div class="feed-heat"><div class="feed-heat-cap">Court movement</div><div class="feed-heat-svg"></div><div class="feed-heat-names"><span>'+feedEsc(p.p1.split(" ")[0])+'</span><span>'+feedEsc(p.p2.split(" ")[0])+'</span></div></div>'+
-        '<div><div class="feed-stat-l">Pressure applied</div><div class="feed-press"><div class="row"><span class="num p1">'+p.prP1+'</span><span class="u">/100</span><span class="nm">'+feedEsc(p.p1.split(" ")[0])+'</span></div><div class="row"><span class="num p2">'+p.prP2+'</span><span class="u">/100</span><span class="nm">'+feedEsc(p.p2.split(" ")[0])+'</span></div></div></div></div>';
+        '<div class="feed-body"><div class="feed-heat"><div class="feed-heat-cap">Court movement</div><div class="feed-heat-svg"></div><div class="feed-heat-names"><span>'+feedEsc(feedFirst(p.p1))+'</span><span>'+feedEsc(feedFirst(p.p2))+'</span></div></div>'+
+        '<div><div class="feed-stat-l">Pressure applied</div><div class="feed-press"><div class="row"><span class="num p1">'+p.prP1+'</span><span class="u">/100</span><span class="nm">'+feedEsc(feedFirst(p.p1))+'</span></div><div class="row"><span class="num p2">'+p.prP2+'</span><span class="u">/100</span><span class="nm">'+feedEsc(feedFirst(p.p2))+'</span></div></div></div></div>';
       host.appendChild(card);
       hydrateFeedCard(card,p);
     });
