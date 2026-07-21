@@ -12569,8 +12569,21 @@ function renderProfileSubscription(){
     const cycle=(currentUserDoc&&currentUserDoc.plan)==="annual"?"Annual":"Monthly";
     box.innerHTML=`<div class="sub-plan"><div class="pl">BoastIQ Pro <span class="sub-badge">Active</span></div><div class="smeta">${cycle} plan</div></div>`+
       `<div class="sub-actions"><button class="sbtn primary" id="btn-sub-manage" type="button">Manage subscription</button></div>`;
-    document.getElementById("btn-sub-manage").addEventListener("click",()=>{
-      alert("Self-serve plan management is coming soon. Email support@boast-iq.com to change or cancel your plan.");
+    document.getElementById("btn-sub-manage").addEventListener("click", async (e)=>{
+      const btn=e.currentTarget;
+      btn.disabled=true; const orig=btn.textContent; btn.textContent="Opening…";
+      try{
+        const resp=await fetch(`${API}/api/create-portal-session`,{
+          method:"POST", headers:await authHeaders(),
+          body:JSON.stringify({returnUrl:location.origin}),
+        });
+        const d=await resp.json().catch(()=>({}));
+        if(resp.ok&&d.url){ window.location.href=d.url; return; }
+        alert(d.detail==="no_billing_account"
+          ? "No billing account found for this user yet."
+          : "Couldn't open the billing portal. Please try again or email support@boast-iq.com.");
+      }catch(_){ alert("Couldn't open the billing portal. Please try again."); }
+      btn.disabled=false; btn.textContent=orig;
     });
   } else {
     const left=freeUploadsRemaining();
