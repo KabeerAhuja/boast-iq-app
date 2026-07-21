@@ -12566,6 +12566,12 @@ function renderProfileSubscription(){
   const box=document.getElementById("profile-sub-box");
   if(!box) return;
   if(hasActiveSub()){
+    // Accounts granted Pro directly (admin/comped) have no Stripe customer, so
+    // there is no billing portal to open — show the status without a dead button.
+    if(!(currentUserDoc&&currentUserDoc.stripeCustomerId)){
+      box.innerHTML=`<div class="sub-plan"><div class="pl">BoastIQ Pro <span class="sub-badge">Active</span></div><div class="smeta">Complimentary access — no billing to manage.</div></div>`;
+      return;
+    }
     const cycle=(currentUserDoc&&currentUserDoc.plan)==="annual"?"Annual":"Monthly";
     box.innerHTML=`<div class="sub-plan"><div class="pl">BoastIQ Pro <span class="sub-badge">Active</span></div><div class="smeta">${cycle} plan</div></div>`+
       `<div class="sub-actions"><button class="sbtn primary" id="btn-sub-manage" type="button">Manage subscription</button></div>`;
