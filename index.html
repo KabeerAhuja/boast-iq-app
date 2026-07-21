@@ -180,17 +180,36 @@
   .feed-poster{position:absolute;inset:0;display:grid;place-items:center;color:var(--text-dim);font-size:13px;background:radial-gradient(120% 90% at 50% 0%, var(--accent-dim), #08080e 70%);}
   .feed-badges{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:2;}
   .feed-badge{font-size:11px;font-weight:700;padding:5px 10px;border-radius:99px;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);color:#fff;border:1px solid rgba(255,255,255,.14);}
-  .feed-body{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;padding:14px;align-items:center;}
+  .feed-body{display:grid;grid-template-columns:minmax(200px,232px) minmax(0,1fr);gap:14px;padding:14px;align-items:start;}
+  .feed-date{margin-left:auto;color:var(--text-dim);font-size:12.5px;font-weight:500;}
   .feed-heat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;}
   .feed-heat-svg svg{width:100%;height:auto;display:block;border-radius:6px;}
   .feed-heat-cap{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);text-align:center;margin-bottom:4px;}
   .feed-heat-names{display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-top:4px;}
   .feed-stat-l{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;}
-  .feed-press{display:flex;flex-direction:column;gap:12px;}
-  .feed-press .row{display:flex;align-items:baseline;gap:7px;}
-  .feed-press .num{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;line-height:1;}
-  .feed-press .num.p1{color:var(--accent);} .feed-press .num.p2{color:var(--pink);}
-  .feed-press .u{font-size:11px;color:var(--text-dim);} .feed-press .nm{font-size:12px;color:var(--text-dim);}
+  .feed-stats{display:flex;flex-direction:column;gap:11px;min-width:0;}
+  .feed-stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 15px;}
+  .feed-press{display:flex;gap:14px;}
+  .fp{flex:1;min-width:0;}
+  .fp-num{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:700;line-height:1;letter-spacing:-0.02em;}
+  .fp-num.p1{color:var(--accent);} .fp-num.p2{color:var(--pink);}
+  .fp-num small{font-size:12px;color:var(--text-dim);font-weight:600;margin-left:3px;letter-spacing:0;}
+  .fp-nm{font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:6px;margin-top:5px;}
+  .feed-bar{height:7px;border-radius:99px;overflow:hidden;display:flex;margin-top:12px;background:rgba(0,0,0,0.4);}
+  .feed-bar i{background:var(--accent);} .feed-bar em{background:var(--pink);}
+  .feed-two{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+  .feed-big{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;line-height:1;letter-spacing:-0.02em;}
+  .feed-big small{font-size:13px;color:var(--text-dim);font-weight:600;margin-left:2px;}
+  .feed-rows{display:flex;flex-direction:column;gap:7px;}
+  .fr{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;}
+  .fr>span{display:flex;align-items:center;gap:7px;min-width:0;}
+  .fr b{font-weight:700;white-space:nowrap;}
+  .fr .fr-u{font-size:11px;color:var(--text-dim);font-weight:600;}
+  @media(max-width:680px){
+    .feed-body{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:center;}
+    .feed-press{flex-direction:column;gap:12px;}
+    .feed-two,.feed-extra{display:none;}
+  }
 
   .container {
     max-width: 900px;
@@ -5422,6 +5441,18 @@ function feedEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp
 // First name for display — but keep default labels ("Player 1") whole so they
 // don't shorten to a meaningless "Player".
 function feedFirst(n){ n=String(n||""); return /^player\s*\d/i.test(n) ? n : n.split(" ")[0]; }
+// Distance run during the rally, from the point's 5Hz movement track (meters).
+function feedDist(mv,who){
+  const xs=(((mv||{})[who])||{}).x||[], ys=(((mv||{})[who])||{}).y||[];
+  let d=0,px=null,py=null;
+  for(let i=0;i<xs.length;i++){
+    const x=xs[i],y=ys[i];
+    if(x==null||y==null||x<0||x>6.4||y<0||y>9.75){px=py=null;continue;}
+    if(px!=null) d+=Math.hypot(x-px,y-py);
+    px=x;py=y;
+  }
+  return Math.round(d);
+}
 function feedTrack(mv){
   const CW=6.4,CH=9.75,out={};
   for(const who of ['player_1','player_2']){
@@ -5464,10 +5495,18 @@ async function loadHomeFeed(){
         const pc=v.data.playerConfig||{};
         const p1=(idx.player_1&&idx.player_1.name)||(pc.player_1&&pc.player_1.name)||"Player 1";
         const p2=(idx.player_2&&idx.player_2.name)||(pc.player_2&&pc.player_2.name)||"Player 2";
+        let dateLabel="";
+        try{
+          const dt=v.data.captureDate?new Date(v.data.captureDate):(v.data.createdAt&&v.data.createdAt.toDate?v.data.createdAt.toDate():null);
+          if(dt&&!isNaN(dt)) dateLabel=dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+        }catch(_){}
         mpp.forEach(e=>{
           const d=dur[e.point_number];
           if(d==null||d<10||e.pressureP1==null||e.pressureP2==null) return;
-          pts.push({key:v.id,pn:e.point_number,dur:+d,p1,p2,prP1:Math.round(e.pressureP1),prP2:Math.round(e.pressureP2),pressure:Math.round(Math.max(e.pressureP1,e.pressureP2))});
+          pts.push({key:v.id,pn:e.point_number,dur:+d,p1,p2,date:dateLabel,
+            prP1:Math.round(e.pressureP1),prP2:Math.round(e.pressureP2),
+            recP1:Math.round(e.recoveryP1||0),recP2:Math.round(e.recoveryP2||0),
+            pressure:Math.round(Math.max(e.pressureP1,e.pressureP2))});
         });
       }catch(_){}
     }));
@@ -5479,11 +5518,34 @@ async function loadHomeFeed(){
     top.forEach(p=>{
       const card=document.createElement("article");
       card.className="feed-card";
+      const f1=feedEsc(feedFirst(p.p1)), f2=feedEsc(feedFirst(p.p2));
+      const w1=Math.max(4,Math.min(96,Math.round(100*p.prP1/((p.prP1+p.prP2)||1))));
       card.innerHTML=
-        '<div class="feed-card-head"><span class="feed-dot p1"></span>'+feedEsc(p.p1)+'<span class="vs">vs</span><span class="feed-dot p2"></span>'+feedEsc(p.p2)+'</div>'+
+        '<div class="feed-card-head"><span class="feed-dot p1"></span>'+feedEsc(p.p1)+'<span class="vs">vs</span><span class="feed-dot p2"></span>'+feedEsc(p.p2)+(p.date?'<span class="feed-date">'+feedEsc(p.date)+'</span>':'')+'</div>'+
         '<div class="feed-media"><div class="feed-poster">Loading clip…</div><div class="feed-badges"><span class="feed-badge">Pressure '+p.pressure+'</span><span class="feed-badge">'+p.dur.toFixed(1)+'s rally</span></div></div>'+
-        '<div class="feed-body"><div class="feed-heat"><div class="feed-heat-cap">Court movement</div><div class="feed-heat-svg"></div><div class="feed-heat-names"><span>'+feedEsc(feedFirst(p.p1))+'</span><span>'+feedEsc(feedFirst(p.p2))+'</span></div></div>'+
-        '<div><div class="feed-stat-l">Pressure applied</div><div class="feed-press"><div class="row"><span class="num p1">'+p.prP1+'</span><span class="u">/100</span><span class="nm">'+feedEsc(feedFirst(p.p1))+'</span></div><div class="row"><span class="num p2">'+p.prP2+'</span><span class="u">/100</span><span class="nm">'+feedEsc(feedFirst(p.p2))+'</span></div></div></div></div>';
+        '<div class="feed-body">'+
+          '<div class="feed-heat"><div class="feed-heat-cap">Court movement</div><div class="feed-heat-svg"></div><div class="feed-heat-names"><span>'+f1+'</span><span>'+f2+'</span></div></div>'+
+          '<div class="feed-stats">'+
+            '<div class="feed-stat"><div class="feed-stat-l">Pressure applied</div>'+
+              '<div class="feed-press">'+
+                '<div class="fp"><div class="fp-num p1">'+p.prP1+'<small>/100</small></div><div class="fp-nm"><span class="feed-dot p1"></span>'+f1+'</div></div>'+
+                '<div class="fp"><div class="fp-num p2">'+p.prP2+'<small>/100</small></div><div class="fp-nm"><span class="feed-dot p2"></span>'+f2+'</div></div>'+
+              '</div>'+
+              '<div class="feed-bar"><i style="width:'+w1+'%"></i><em style="width:'+(100-w1)+'%"></em></div>'+
+            '</div>'+
+            '<div class="feed-two">'+
+              '<div class="feed-stat"><div class="feed-stat-l">Rally</div><div class="feed-big">'+p.dur.toFixed(1)+'<small>s</small></div></div>'+
+              '<div class="feed-stat"><div class="feed-stat-l">Distance</div><div class="feed-rows">'+
+                '<div class="fr"><span><span class="feed-dot p1"></span>'+f1+'</span><b class="feed-dist-p1">–</b></div>'+
+                '<div class="fr"><span><span class="feed-dot p2"></span>'+f2+'</span><b class="feed-dist-p2">–</b></div>'+
+              '</div></div>'+
+            '</div>'+
+            '<div class="feed-stat feed-extra"><div class="feed-stat-l">Recovery to the T</div><div class="feed-rows">'+
+              '<div class="fr"><span><span class="feed-dot p1"></span>'+f1+'</span><b>'+p.recP1+'<small class="fr-u"> /100</small></b></div>'+
+              '<div class="fr"><span><span class="feed-dot p2"></span>'+f2+'</span><b>'+p.recP2+'<small class="fr-u"> /100</small></b></div>'+
+            '</div></div>'+
+          '</div>'+
+        '</div>';
       host.appendChild(card);
       feedCards.push([card,p]);
     });
@@ -5512,6 +5574,9 @@ async function hydrateFeedCard(card,p,eager){
       const sh=card.querySelector(".feed-heat-svg"); if(sh) sh.innerHTML=feedCourtHeat(feedTrack(pd.movement||{}));
       if(pd.start_time_sec!=null) start=+pd.start_time_sec;
       end=(pd.end_time_sec!=null)?+pd.end_time_sec:start+(p.dur||10);
+      const d1=card.querySelector(".feed-dist-p1"), d2=card.querySelector(".feed-dist-p2");
+      if(d1) d1.textContent=feedDist(pd.movement,"player_1")+"m";
+      if(d2) d2.textContent=feedDist(pd.movement,"player_2")+"m";
     }
   }catch(_){}
   const media=card.querySelector(".feed-media");
