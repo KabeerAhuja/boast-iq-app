@@ -3896,6 +3896,17 @@
   .sub-actions .sbtn:hover{border-color:var(--accent);}
   .sub-actions .sbtn.primary{background:var(--accent);color:#001417;border:0;}
   @media(max-width:680px){.summary-grid{grid-template-columns:1fr 1fr;}}
+  /* ===== Emoji → SVG icon sizing ===== */
+  .videos-empty-icon svg{width:44px;height:44px;color:var(--text-dim);margin:0 auto;display:block;}
+  .upload-zone .icon svg{width:44px;height:44px;color:var(--text-dim);margin:0 auto;display:block;}
+  .thumb-ph{display:grid;place-items:center;}
+  .thumb-ph svg{width:34px;height:34px;color:rgba(255,255,255,0.25);display:block;}
+  .profile-photo-edit svg,.profile-name-edit-btn svg{width:13px;height:13px;display:block;margin:0 auto;}
+  /* ===== Feed video player: progress + tap ===== */
+  .feed-media video{cursor:pointer;}
+  .feed-badges{pointer-events:none;}
+  .feed-progress{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,0.14);z-index:2;pointer-events:none;}
+  .feed-progress i{display:block;height:100%;width:0%;background:var(--accent);transition:width .12s linear;}
 </style>
 <!-- Stripe.js — powers the embedded card fields in the upgrade modal -->
 <script src="https://js.stripe.com/v3/"></script>
@@ -3952,7 +3963,7 @@
 </div>
 
 <div class="bg-gradient"></div>
-<div class="speed-indicator" id="speed-indicator">⚡ 2x Speed</div>
+<div class="speed-indicator" id="speed-indicator">2× Speed</div>
 
 <div class="header">
   <div class="header-left">
@@ -3960,8 +3971,8 @@
     <button class="btn-back" id="btn-back-to-videos" style="display:none;">← My Videos</button>
   </div>
   <nav class="tabnav" id="tabnav">
-    <button class="tabnav-btn active" data-tab="home" type="button">Home</button>
     <button class="tabnav-btn" data-tab="videos" type="button">My Videos</button>
+    <button class="tabnav-btn active" data-tab="home" type="button">Home</button>
     <button class="tabnav-btn" data-tab="profile" type="button">Profile</button>
   </nav>
   <div class="header-right">
@@ -4338,7 +4349,7 @@
     </div>
     <div class="videos-loading" id="videos-loading">Loading…</div>
     <div class="videos-empty" id="videos-empty" style="display:none;">
-      <div class="videos-empty-icon">🎬</div>
+      <div class="videos-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"/></svg></div>
       <div class="videos-empty-title">No videos yet</div>
       <div class="videos-empty-desc">Upload your first squash match video to get started.</div>
     </div>
@@ -4358,7 +4369,7 @@
       </div>
       <div class="videos-loading" id="coach-roster-loading">Loading…</div>
       <div class="videos-empty" id="coach-roster-empty" style="display:none;">
-        <div class="videos-empty-icon">👥</div>
+        <div class="videos-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c0-3 2.5-4.6 5.5-4.6s5.5 1.6 5.5 4.6" stroke-linecap="round"/><circle cx="16.5" cy="9" r="2.6"/><path d="M15.5 14.6c2.8.2 5 1.7 5 4.4" stroke-linecap="round"/></svg></div>
         <div class="videos-empty-title">No students yet</div>
         <div class="videos-empty-desc">Click <strong>+ Add Student</strong> to invite someone you coach.</div>
       </div>
@@ -4372,7 +4383,7 @@
       <div class="student-stat-strip" id="student-detail-stats"></div>
       <div class="videos-loading" id="student-videos-loading">Loading matches…</div>
       <div class="videos-empty" id="student-videos-empty" style="display:none;">
-        <div class="videos-empty-icon">🎬</div>
+        <div class="videos-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"/></svg></div>
         <div class="videos-empty-title">No matches yet</div>
         <div class="videos-empty-desc">This student hasn't uploaded any matches.</div>
       </div>
@@ -4388,7 +4399,7 @@
           <div class="profile-photo-wrap">
             <img class="profile-photo-img" id="profile-photo-img" alt="" style="display:none;">
             <div class="profile-photo-placeholder" id="profile-photo-placeholder"></div>
-            <button class="profile-photo-edit" id="btn-edit-profile-photo" title="Change profile picture" type="button">✎</button>
+            <button class="profile-photo-edit" id="btn-edit-profile-photo" title="Change profile picture" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16v4z" stroke-linejoin="round"/><path d="M13 7l4 4" stroke-linecap="round"/></svg></button>
             <!-- accept="image/*" lets iOS / Android show the native picker with
                  Photo Library / Take Photo / Choose Files options. -->
             <input type="file" id="profile-photo-input" accept="image/*" style="display:none;">
@@ -4396,7 +4407,7 @@
           <div class="profile-meta">
             <div class="profile-name-row" id="profile-name-display">
               <h2 class="profile-name" id="profile-name"></h2>
-              <button class="profile-name-edit-btn" id="btn-edit-profile-name" title="Edit display name" type="button">✎</button>
+              <button class="profile-name-edit-btn" id="btn-edit-profile-name" title="Edit display name" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16v4z" stroke-linejoin="round"/><path d="M13 7l4 4" stroke-linecap="round"/></svg></button>
             </div>
             <div id="profile-name-edit" style="display:none;">
               <input type="text" class="profile-name-input" id="profile-name-input" maxlength="60">
@@ -4458,7 +4469,7 @@
     <div class="step-title">Upload Video</div>
     <div class="step-desc">Upload your squash match video to begin tracking. We support MP4 and MOV files.</div>
     <div class="upload-zone" id="upload-zone">
-      <div class="icon">🎬</div>
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"/></svg></div>
       <div><strong>Choose a video</strong> from your files or camera roll</div>
       <button type="button" id="btn-choose-video" class="btn-choose-video">Choose Video</button>
       <p>MP4 or MOV · or drop a file here</p>
@@ -4510,8 +4521,8 @@
         <div class="form-group">
           <label class="form-label">Dominant Hand</label>
           <div class="hand-toggle">
-            <button class="hand-btn selected" data-player="1" data-hand="right"><span class="icon">🤚</span> Right</button>
-            <button class="hand-btn" data-player="1" data-hand="left"><span class="icon">✋</span> Left</button>
+            <button class="hand-btn selected" data-player="1" data-hand="right">Right</button>
+            <button class="hand-btn" data-player="1" data-hand="left">Left</button>
           </div>
         </div>
       </div>
@@ -4540,8 +4551,8 @@
         <div class="form-group">
           <label class="form-label">Dominant Hand</label>
           <div class="hand-toggle">
-            <button class="hand-btn selected" data-player="2" data-hand="right"><span class="icon">🤚</span> Right</button>
-            <button class="hand-btn" data-player="2" data-hand="left"><span class="icon">✋</span> Left</button>
+            <button class="hand-btn selected" data-player="2" data-hand="right">Right</button>
+            <button class="hand-btn" data-player="2" data-hand="left">Left</button>
           </div>
         </div>
       </div>
@@ -4635,7 +4646,7 @@
     </div>
     <div id="reprompt-section" style="display:none;">
       <div class="reprompt-banner">
-        <div class="icon">⚠️</div>
+        <div class="icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 22 20H2z" stroke-linejoin="round"/><path d="M12 9v5" stroke-linecap="round"/><circle cx="12" cy="17.2" r="0.7" fill="currentColor" stroke="none"/></svg></div>
         <div>
           <p><strong id="reprompt-msg">Player tracking lost.</strong></p>
           <p style="color: var(--text-dim); font-size: 13px; margin-top: 4px;">Click on the player positions in the frame below, then click Resume.</p>
@@ -5684,23 +5695,69 @@ async function hydrateFeedCard(card,p,eager){
     const rawKey=p.key.replace(/__g\d+$/,"");
     const src=await getDownloadURL(ref(fbStorage,`uploaded-videos/${rawKey}.mp4`));
     const v=document.createElement("video");
-    v.muted=true; v.playsInline=true; v.autoplay=true; v.loop=false;
+    v.muted=true; v.playsInline=true; v.loop=false;
     v.preload=eager?"auto":"metadata";
     v.src=src+"#t="+s0.toFixed(1);
+    v.dataset.s0=String(s0); v.dataset.s1=String(s1);
     v.addEventListener("loadedmetadata",()=>{ try{ v.currentTime=s0; }catch(_){} });
-    v.addEventListener("timeupdate",()=>{ if(v.currentTime>=s1){ v.currentTime=s0; v.play().catch(()=>{}); } });
+    v.addEventListener("timeupdate",()=>{ if(v.currentTime>=s1){ v.currentTime=s0; if(!v.paused) v.play().catch(()=>{}); } });
     media.innerHTML=""; media.appendChild(v);
     media.insertAdjacentHTML("beforeend",badgesHTML);
-    v.play().catch(()=>{});
+    setupFeedVideo(media, v);
   }catch(e){
     // Fallback: the server-rendered clip (cached once rendered).
     try{
       const r=await fetch(`${API}/api/clip/${encodeURIComponent(p.key)}/${p.pn}`);
       const c=r.ok?await r.json():null;
-      if(c&&c.url){ media.innerHTML='<video src="'+c.url+'" autoplay muted loop playsinline preload="metadata"></video>'+badgesHTML; return; }
+      if(c&&c.url){
+        const v=document.createElement("video");
+        v.muted=true; v.playsInline=true; v.loop=true; v.preload="metadata"; v.src=c.url;
+        media.innerHTML=""; media.appendChild(v);
+        media.insertAdjacentHTML("beforeend",badgesHTML);
+        setupFeedVideo(media, v);
+        return;
+      }
     }catch(_){}
     const po=media.querySelector(".feed-poster"); if(po) po.textContent="Clip unavailable";
   }
+}
+
+// ===== Feed playback manager: progress bar, tap play/pause, only the card in
+// view plays (everything else pauses as you scroll). =====
+const feedPlayObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver((ents)=>{
+      ents.forEach(en=>{
+        const v=en.target.querySelector("video");
+        if(!v) return;
+        if(en.isIntersecting && en.intersectionRatio>=0.5){
+          if(v.dataset.userPaused!=="1") v.play().catch(()=>{});
+        } else {
+          v.pause();
+        }
+      });
+    },{threshold:[0,0.5]})
+  : null;
+
+function setupFeedVideo(media, v){
+  // Thin progress bar along the bottom of the viewer (tracks the rally window).
+  const bar=document.createElement("div");
+  bar.className="feed-progress"; bar.innerHTML="<i></i>";
+  media.appendChild(bar);
+  const fill=bar.firstChild;
+  v.addEventListener("timeupdate",()=>{
+    const s0=parseFloat(v.dataset.s0||"0");
+    const s1=parseFloat(v.dataset.s1||"")||v.duration||0;
+    if(s1>s0) fill.style.width=Math.max(0,Math.min(100,(v.currentTime-s0)/(s1-s0)*100))+"%";
+  });
+  // Tap the video to pause/resume.
+  v.addEventListener("click",()=>{
+    if(v.paused){ v.dataset.userPaused="0"; v.play().catch(()=>{}); }
+    else { v.dataset.userPaused="1"; v.pause(); }
+  });
+  // Visibility-driven playback: fires immediately on observe, so the on-screen
+  // card starts and off-screen cards stay paused.
+  if(feedPlayObserver) feedPlayObserver.observe(media);
+  else v.play().catch(()=>{});
 }
 // Wire the tab-nav shell (logo, tabs, upload +) to the existing views.
 document.getElementById("brand-home").addEventListener("click", goHome);
@@ -5899,7 +5956,7 @@ async function renderMatchGroupCard(parentKey, games) {
       break;
     } catch (err) { /* try next */ }
   }
-  if (!loaded) thumb.appendChild(document.createTextNode("🎬"));
+  if (!loaded) { const ph = document.createElement("span"); ph.className = "thumb-ph"; ph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"/></svg>'; thumb.appendChild(ph); }
   // Blue "N games" badge
   const badge = document.createElement("div");
   badge.className = "match-group-badge";
@@ -6133,7 +6190,7 @@ async function renderVideoCard(videoKeyId, data) {
       break;
     } catch (err) { /* try next candidate */ }
   }
-  if (!loaded) thumb.appendChild(document.createTextNode("🎬"));
+  if (!loaded) { const ph = document.createElement("span"); ph.className = "thumb-ph"; ph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"/></svg>'; thumb.appendChild(ph); }
 
   // Status pill (mockup parity)
   {
@@ -6804,7 +6861,7 @@ async function handleApplyPromo() {
     input.disabled = true;
     applyBtn.textContent = "Applied";
     if (data.noCardRequired) {
-      promoMsg(`🎉 Code applied — ${data.freeLabel || "free"}, no credit card required.`, "success");
+      promoMsg(`Code applied — ${data.freeLabel || "free"}, no credit card required.`, "success");
     } else {
       const dollars = (data.newMonthlyCents / 100).toFixed(0);
       promoMsg(`✓ Code applied — you'll be charged $${dollars} now.`, "success");
@@ -12633,7 +12690,7 @@ document.getElementById("profile-photo-input").addEventListener("change", async 
     showProfileMsg(`Couldn't upload: ${err.code || err.message}`, "error");
   } finally {
     editBtn.disabled = false;
-    editBtn.textContent = "✎";
+    editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16v4z" stroke-linejoin="round"/><path d="M13 7l4 4" stroke-linecap="round"/></svg>';
     e.target.value = "";
   }
 });
