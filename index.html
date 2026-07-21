@@ -141,7 +141,57 @@
     color: var(--text-dim);
     backdrop-filter: blur(10px);
   }
-  
+
+  /* ===== Redesign nav shell (tabs) ===== */
+  #brand-home{cursor:pointer;}
+  .brand{display:flex;align-items:center;gap:10px;background:none;border:0;padding:0;cursor:pointer;}
+  .brand-logo{width:34px;height:34px;border-radius:9px;object-fit:cover;flex:none;box-shadow:0 3px 14px rgba(0,0,0,.45);}
+  .brand-word{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:21px;letter-spacing:-0.5px;color:var(--text);}
+  .brand-iq{color:var(--accent);}
+  .tabnav{display:none;gap:4px;}
+  body.authed .tabnav{display:flex;}
+  .tabnav-btn{background:none;border:0;color:var(--text-dim);font-weight:600;font-size:14px;padding:9px 16px;border-radius:10px;cursor:pointer;font-family:inherit;transition:.15s;}
+  .tabnav-btn:hover{color:var(--text);background:var(--surface);}
+  .tabnav-btn.active{color:var(--text);position:relative;}
+  .tabnav-btn.active::after{content:"";position:absolute;left:16px;right:16px;bottom:2px;height:2px;background:var(--accent);border-radius:2px;}
+  .nav-upload{display:none;align-items:center;gap:6px;background:linear-gradient(135deg,var(--accent),var(--blue));color:#001417;border:0;font-weight:700;font-size:14px;padding:9px 16px;border-radius:12px;cursor:pointer;font-family:inherit;box-shadow:0 4px 18px var(--accent-glow);}
+  body.authed .nav-upload{display:inline-flex;}
+  .videos-header #btn-new-upload{display:none;}
+  .bottomnav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:200;height:64px;background:rgba(5,5,8,0.92);backdrop-filter:blur(18px);border-top:1px solid var(--border);align-items:center;justify-content:space-around;padding:0 8px 4px;}
+  body.authed .bottomnav{display:flex;}
+  .bottomnav button{background:none;border:0;color:var(--text-dim);display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;padding:6px 10px;flex:1;cursor:pointer;font-family:inherit;}
+  .bottomnav button.active{color:var(--accent);}
+  .bottomnav button svg{width:23px;height:23px;}
+  .bottomnav-fab{flex:none;}
+  .bottomnav-fab-in{width:50px;height:50px;border-radius:16px;background:linear-gradient(135deg,var(--accent),var(--pink));display:grid;place-items:center;margin-top:-14px;box-shadow:0 6px 22px var(--accent-glow);}
+  .bottomnav-fab-in svg{width:26px;height:26px;color:#001417;}
+  @media(max-width:760px){ body.authed .tabnav{display:none;} body.authed .nav-upload{display:none;} .container{padding-bottom:90px;} }
+  @media(min-width:761px){ body.authed .bottomnav{display:none;} }
+  .home-placeholder{color:var(--text-dim);padding:40px 0;text-align:center;}
+  /* Home feed cards */
+  .home-feed{display:flex;flex-direction:column;gap:22px;max-width:640px;margin:0 auto;}
+  .feed-card{background:var(--surface-solid);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .feed-card-head{display:flex;align-items:center;gap:9px;padding:14px 16px;font-weight:600;font-size:14px;flex-wrap:wrap;}
+  .feed-dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none;}
+  .feed-dot.p1{background:var(--accent);} .feed-dot.p2{background:var(--pink);}
+  .feed-card-head .vs{color:var(--text-dim);font-weight:500;font-size:12px;margin:0 2px;}
+  .feed-media{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden;}
+  .feed-media video{width:100%;height:100%;object-fit:cover;display:block;background:#000;}
+  .feed-poster{position:absolute;inset:0;display:grid;place-items:center;color:var(--text-dim);font-size:13px;background:radial-gradient(120% 90% at 50% 0%, var(--accent-dim), #08080e 70%);}
+  .feed-badges{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:2;}
+  .feed-badge{font-size:11px;font-weight:700;padding:5px 10px;border-radius:99px;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);color:#fff;border:1px solid rgba(255,255,255,.14);}
+  .feed-body{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;padding:14px;align-items:center;}
+  .feed-heat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;}
+  .feed-heat-svg svg{width:100%;height:auto;display:block;border-radius:6px;}
+  .feed-heat-cap{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);text-align:center;margin-bottom:4px;}
+  .feed-heat-names{display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-top:4px;}
+  .feed-stat-l{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;}
+  .feed-press{display:flex;flex-direction:column;gap:12px;}
+  .feed-press .row{display:flex;align-items:baseline;gap:7px;}
+  .feed-press .num{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;line-height:1;}
+  .feed-press .num.p1{color:var(--accent);} .feed-press .num.p2{color:var(--pink);}
+  .feed-press .u{font-size:11px;color:var(--text-dim);} .feed-press .nm{font-size:12px;color:var(--text-dim);}
+
   .container {
     max-width: 900px;
     margin: 0 auto;
@@ -3825,10 +3875,16 @@
 
 <div class="header">
   <div class="header-left">
-    <h1>BoastIQ</h1>
+    <button id="brand-home" class="brand" type="button" title="Home"><img class="brand-logo" src="https://boast-iq.com/assets/logo.png" alt=""><span class="brand-word">Boast<span class="brand-iq">-IQ</span></span></button>
     <button class="btn-back" id="btn-back-to-videos" style="display:none;">← My Videos</button>
   </div>
+  <nav class="tabnav" id="tabnav">
+    <button class="tabnav-btn active" data-tab="home" type="button">Home</button>
+    <button class="tabnav-btn" data-tab="videos" type="button">My Videos</button>
+    <button class="tabnav-btn" data-tab="profile" type="button">Profile</button>
+  </nav>
   <div class="header-right">
+    <button class="nav-upload" id="nav-upload" type="button">＋ Upload</button>
     <button class="btn-header" id="btn-coach-dashboard" style="display:none;">Coach Dashboard</button>
     <button class="btn-header" id="btn-admin-coaches" style="display:none;">Manage Coaches</button>
     <button class="btn-header" id="btn-admin-subs" style="display:none;">Manage Subscriptions</button>
@@ -3845,6 +3901,13 @@
     </div>
   </div>
 </div>
+
+<nav class="bottomnav" id="bottomnav">
+  <button class="active" data-tab="home" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5" stroke-linejoin="round"/></svg>Home</button>
+  <button data-tab="videos" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M10 8.5v7l5.5-3.5z" fill="currentColor" stroke="none"/></svg>Mine</button>
+  <button class="bottomnav-fab" id="bottomnav-fab" type="button"><span class="bottomnav-fab-in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></span><span>Upload</span></button>
+  <button data-tab="profile" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" stroke-linecap="round"/></svg>Profile</button>
+</nav>
 
 <!-- Coach modal (hidden by default) -->
 <div id="coach-modal" class="modal-overlay" style="display:none;">
@@ -4175,6 +4238,12 @@
 </div>
 
 <div class="container">
+  <!-- Step: Home feed -->
+  <div id="step-home" class="step">
+    <div class="step-label">This week</div>
+    <div class="step-title">Highlights</div>
+    <div id="home-feed" class="home-feed"><div class="home-placeholder">Your top-pressure rallies will appear here.</div></div>
+  </div>
   <!-- Step 0: My Videos -->
   <div id="step-videos" class="step">
     <div class="videos-header">
@@ -5084,6 +5153,7 @@ onAuthStateChanged(fbAuth, async (user) => {
     console.log("[DEBUG] Signed in as", user.email, "uid:", user.uid);
     loginOverlay.classList.add("hidden");
     userInfo.style.display = "flex";
+    document.body.classList.add("authed");
     document.getElementById("btn-manage-coach").style.display = "inline-flex";
     userPhoto.src = user.photoURL || "";
     userName.textContent = user.displayName || user.email || "Signed in";
@@ -5187,11 +5257,12 @@ onAuthStateChanged(fbAuth, async (user) => {
       }
       // Fall through to the library if the video can't be opened.
     }
-    goToMyVideos();
+    goHome();
   } else {
     console.log("[DEBUG] Signed out");
     loginOverlay.classList.remove("hidden");
     userInfo.style.display = "none";
+    document.body.classList.remove("authed");
     setUserMenuOpen(false);
     document.getElementById("btn-manage-coach").style.display = "none";
     document.getElementById("btn-admin-coaches").style.display = "none";
@@ -5306,13 +5377,19 @@ async function authHeaders(extra = {}) {
 // The file the user tried to upload before the upgrade modal opened; resumed
 // after the subscription becomes active.
 let pendingUploadFile = null;
-const $steps = { videos: document.getElementById("step-videos"), upload: document.getElementById("step-upload"), config: document.getElementById("step-config"), markGames: document.getElementById("step-mark-games"), select: document.getElementById("step-select"), process: document.getElementById("step-process"), results: document.getElementById("step-results"), coachDashboard: document.getElementById("step-coach-dashboard"), profile: document.getElementById("step-profile") };
+const $steps = { home: document.getElementById("step-home"), videos: document.getElementById("step-videos"), upload: document.getElementById("step-upload"), config: document.getElementById("step-config"), markGames: document.getElementById("step-mark-games"), select: document.getElementById("step-select"), process: document.getElementById("step-process"), results: document.getElementById("step-results"), coachDashboard: document.getElementById("step-coach-dashboard"), profile: document.getElementById("step-profile") };
 const btnBackToVideos = document.getElementById("btn-back-to-videos");
 function showStep(name) {
   Object.values($steps).forEach(s => s.classList.remove("active"));
   $steps[name].classList.add("active");
-  // Show back link on every step except the videos list itself
-  btnBackToVideos.style.display = (name === "videos") ? "none" : "inline-flex";
+  // Show back link on every step except the top-level tab views
+  btnBackToVideos.style.display = (name === "videos" || name === "home") ? "none" : "inline-flex";
+  syncTabs(name);
+}
+// Keep the tab-nav highlight in sync with the active view.
+function syncTabs(name){
+  const tab = (name === "home" || name === "videos" || name === "profile") ? name : null;
+  document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
 }
 btnBackToVideos.addEventListener("click", () => {
   // Only the tab actively driving a tracking job (has a live ws) should be warned.
@@ -5332,6 +5409,107 @@ function goToMyVideos() {
   showStep("videos");
   loadMyVideos();
 }
+
+function goHome(){
+  showStep("home");
+  loadHomeFeed();
+}
+// ===== Home feed: the signed-in user's own top-pressure rallies (Phase 1) =====
+// Reuses the same per-user access query as My Videos, the points-index endpoint
+// (per-point pressure via match_summary.movementPerPoint) and /api/clip.
+let homeFeedLoaded = false;
+function feedEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function feedTrack(mv){
+  const CW=6.4,CH=9.75,out={};
+  for(const who of ['player_1','player_2']){
+    const xs=(mv[who]||{}).x||[], ys=(mv[who]||{}).y||[], pr=[];
+    for(let i=0;i<xs.length;i++){const x=xs[i],y=ys[i]; if(x!=null&&y!=null&&x>=0&&x<=CW&&y>=0&&y<=CH) pr.push([+(+x).toFixed(2),+(+y).toFixed(2)]);}
+    const stride=Math.max(1,Math.floor(pr.length/46)); out[who]=pr.filter((_,i)=>i%stride===0).slice(0,46);
+  }
+  return out;
+}
+function feedCourtHeat(track){
+  const W=6.4,H=9.75,PAD=0.35,vw=W+PAD*2,vh=H+PAD*2;
+  const line=(x1,y1,x2,y2)=>`<line x1="${(x1+PAD).toFixed(2)}" y1="${(y1+PAD).toFixed(2)}" x2="${(x2+PAD).toFixed(2)}" y2="${(y2+PAD).toFixed(2)}"/>`;
+  const court=`<g style="stroke:var(--border-bright);stroke-width:0.05;fill:none"><rect x="${PAD}" y="${PAD}" width="${W}" height="${H}" rx="0.1" style="fill:rgba(255,255,255,0.015);stroke:var(--border-bright);stroke-width:0.06"/>${line(0,5.49,W,5.49)}${line(W/2,5.49,W/2,H)}</g>`;
+  const layer=(pts,v)=>{
+    if(!pts||!pts.length) return '';
+    const blobs=pts.map(([x,y])=>`<circle cx="${(x+PAD).toFixed(2)}" cy="${(y+PAD).toFixed(2)}" r="0.75"/>`).join('');
+    const path='M'+pts.map(([x,y])=>`${(x+PAD).toFixed(2)} ${(y+PAD).toFixed(2)}`).join('L');
+    return `<g filter="url(#hmblur)" style="fill:var(${v})" opacity="0.9">${blobs}</g><path d="${path}" fill="none" style="stroke:var(${v})" stroke-width="0.06" opacity="0.22" stroke-linejoin="round" stroke-linecap="round"/>`;
+  };
+  return `<svg viewBox="0 0 ${vw} ${vh}"><defs><filter id="hmblur" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="0.5"/></filter></defs>${court}${layer(track.player_1,'--accent')}${layer(track.player_2,'--pink')}</svg>`;
+}
+async function loadHomeFeed(){
+  const host = document.getElementById("home-feed");
+  if (!host || homeFeedLoaded || !currentUser) return;
+  homeFeedLoaded = true;
+  host.innerHTML = '<div class="home-placeholder">Finding your hardest rallies…</div>';
+  try{
+    const snap = await getDocs(query(collection(fbFirestore,"videos"), where("accessUids","array-contains",currentUser.uid), orderBy("createdAt","desc")));
+    const vids = snap.docs.map(d=>({id:d.id,data:d.data()}))
+      .filter(v=>!v.data.hiddenFromList && !((v.data.hiddenFor||[]).includes(currentUser.uid)) && v.data.status==="complete")
+      .slice(0,12);
+    const pts=[];
+    await Promise.all(vids.map(async v=>{
+      try{
+        const r=await fetch(`${API}/api/points/${encodeURIComponent(v.id)}/index`);
+        if(!r.ok) return;
+        const idx=await r.json();
+        const mpp=(idx.match_summary||{}).movementPerPoint||[];
+        const dur={}; (idx.points||[]).forEach(p=>{dur[p.point_number]=p.duration_sec;});
+        const pc=v.data.playerConfig||{};
+        const p1=(idx.player_1&&idx.player_1.name)||(pc.player_1&&pc.player_1.name)||"Player 1";
+        const p2=(idx.player_2&&idx.player_2.name)||(pc.player_2&&pc.player_2.name)||"Player 2";
+        mpp.forEach(e=>{
+          const d=dur[e.point_number];
+          if(d==null||d<10||e.pressureP1==null||e.pressureP2==null) return;
+          pts.push({key:v.id,pn:e.point_number,dur:+d,p1,p2,prP1:Math.round(e.pressureP1),prP2:Math.round(e.pressureP2),pressure:Math.round(Math.max(e.pressureP1,e.pressureP2))});
+        });
+      }catch(_){}
+    }));
+    pts.sort((a,b)=>b.pressure-a.pressure);
+    const top=pts.slice(0,8);
+    if(!top.length){ host.innerHTML='<div class="home-placeholder">No 10-second+ rallies yet. Upload a match to see your top-pressure points.</div>'; return; }
+    host.innerHTML="";
+    top.forEach(p=>{
+      const card=document.createElement("article");
+      card.className="feed-card";
+      card.innerHTML=
+        '<div class="feed-card-head"><span class="feed-dot p1"></span>'+feedEsc(p.p1)+'<span class="vs">vs</span><span class="feed-dot p2"></span>'+feedEsc(p.p2)+'</div>'+
+        '<div class="feed-media"><div class="feed-poster">Loading clip…</div><div class="feed-badges"><span class="feed-badge">Pressure '+p.pressure+'</span><span class="feed-badge">'+p.dur.toFixed(1)+'s rally</span></div></div>'+
+        '<div class="feed-body"><div class="feed-heat"><div class="feed-heat-cap">Court movement</div><div class="feed-heat-svg"></div><div class="feed-heat-names"><span>'+feedEsc(p.p1.split(" ")[0])+'</span><span>'+feedEsc(p.p2.split(" ")[0])+'</span></div></div>'+
+        '<div><div class="feed-stat-l">Pressure applied</div><div class="feed-press"><div class="row"><span class="num p1">'+p.prP1+'</span><span class="u">/100</span><span class="nm">'+feedEsc(p.p1.split(" ")[0])+'</span></div><div class="row"><span class="num p2">'+p.prP2+'</span><span class="u">/100</span><span class="nm">'+feedEsc(p.p2.split(" ")[0])+'</span></div></div></div></div>';
+      host.appendChild(card);
+      hydrateFeedCard(card,p);
+    });
+  }catch(e){ console.warn("home feed failed",e); host.innerHTML='<div class="home-placeholder">Couldn\'t load your feed right now.</div>'; homeFeedLoaded=false; }
+}
+async function hydrateFeedCard(card,p){
+  try{
+    const r=await fetch(`${API}/api/points/${encodeURIComponent(p.key)}/${p.pn}`);
+    if(r.ok){ const pd=await r.json(); const sh=card.querySelector(".feed-heat-svg"); if(sh) sh.innerHTML=feedCourtHeat(feedTrack(pd.movement||{})); }
+  }catch(_){}
+  try{
+    const r=await fetch(`${API}/api/clip/${encodeURIComponent(p.key)}/${p.pn}`);
+    const c=r.ok?await r.json():null;
+    const media=card.querySelector(".feed-media");
+    const badges=media.querySelector(".feed-badges");
+    const badgesHTML=badges?badges.outerHTML:'';
+    if(c&&c.url){ media.innerHTML='<video src="'+c.url+'" autoplay muted loop playsinline preload="metadata"></video>'+badgesHTML; }
+    else { const po=media.querySelector(".feed-poster"); if(po) po.textContent="Clip unavailable"; }
+  }catch(_){ const po=card.querySelector(".feed-poster"); if(po) po.textContent="Clip unavailable"; }
+}
+// Wire the tab-nav shell (logo, tabs, upload +) to the existing views.
+document.getElementById("brand-home").addEventListener("click", goHome);
+document.querySelectorAll("[data-tab]").forEach(btn => btn.addEventListener("click", () => {
+  const t = btn.dataset.tab;
+  if (t === "home") goHome();
+  else if (t === "videos") goToMyVideos();
+  else if (t === "profile") openProfilePage();
+}));
+document.getElementById("nav-upload").addEventListener("click", () => showStep("upload"));
+document.getElementById("bottomnav-fab").addEventListener("click", () => showStep("upload"));
 
 // ---- My Videos list ----
 // In-memory holder so the coach filter can re-render without re-querying.
