@@ -4573,7 +4573,15 @@
     </div>
     <div class="step-title" id="mg-title">Single Game</div>
     <div class="step-desc" id="mg-desc">Scrub to the frame where the game begins, then continue to tag your players.</div>
-    <video id="mg-video" class="video-preview" controls preload="metadata" muted playsinline></video>
+    <div id="mg-video-wrap" style="position:relative;">
+      <video id="mg-video" class="video-preview" controls preload="metadata" muted playsinline></video>
+      <!-- Shown when the browser can't decode the raw upload (e.g. iPhone HEVC
+           .MOV in desktop Chrome) while the server produces an H.264 copy. -->
+      <div id="mg-convert-overlay" style="display:none;position:absolute;inset:0;z-index:3;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center;background:rgba(0,0,0,0.88);border-radius:20px;">
+        <div class="dash-viewer-spinner" id="mg-convert-spinner"></div>
+        <div id="mg-convert-msg" style="font-size:13px;font-weight:600;letter-spacing:0.02em;color:rgba(255,255,255,0.85);max-width:420px;"></div>
+      </div>
+    </div>
     <div class="mg-readouts">
       <span id="mg-time">0:00 / 0:00</span>
     </div>
@@ -4861,6 +4869,10 @@ function extractFrameAtSec(sec) {
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
+    // After the HEVC playback fallback, the source can be a remote Firebase
+    // Storage URL (which serves ACAO:*) — without crossOrigin the canvas grab
+    // would taint and toDataURL would throw. No-op for local blob: URLs.
+    video.crossOrigin = "anonymous";
     video.setAttribute("muted", "");
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
@@ -7841,6 +7853,10 @@ function extractClientSideFrame(file) {
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
+    // After the HEVC playback fallback, the source can be a remote Firebase
+    // Storage URL (which serves ACAO:*) — without crossOrigin the canvas grab
+    // would taint and toDataURL would throw. No-op for local blob: URLs.
+    video.crossOrigin = "anonymous";
     // iOS honors the attributes (not just the properties) for inline autoplay.
     video.setAttribute("muted", "");
     video.setAttribute("playsinline", "");
@@ -8700,6 +8716,139 @@ function initMarkGames() {
   mgVideo.src = videoBlobUrl || "";
   mgVideo.load();
   setMgMode("single");
+  armMgDecodeWatch();
+}
+
+// ---- Undecodable-source fallback (iPhone HEVC .MOV in desktop Chrome) -------
+// iPhone camera-roll videos are HEVC 10-bit, which many Chrome installs can't
+// decode: the container parses fine (duration shows) but no frame ever renders,
+// so Step 3 is a blank player. Detect "metadata loaded but zero video frames
+// decoded", then trigger the server-side H.264 transcode (normally deferred to
+// Start Tracking) and swap the player to the web-safe copy when it's ready.
+let mgFallbackState = null; // null | "watching" | "converting" | "done" | "failed"
+let mgWatchTimer = null;
+
+function mgDecodedFrameCount(v) {
+  try {
+    const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+    if (q && typeof q.totalVideoFrames === "number") return q.totalVideoFrames;
+  } catch (e) {}
+  return typeof v.webkitDecodedFrameCount === "number" ? v.webkitDecodedFrameCount : null;
+}
+
+function showMgConvertOverlay(msg, spinning = true) {
+  const ov = document.getElementById("mg-convert-overlay");
+  const label = document.getElementById("mg-convert-msg");
+  const spin = document.getElementById("mg-convert-spinner");
+  if (!ov) return;
+  if (label) label.textContent = msg;
+  if (spin) spin.style.display = spinning ? "" : "none";
+  ov.style.display = "flex";
+}
+
+function hideMgConvertOverlay() {
+  const ov = document.getElementById("mg-convert-overlay");
+  if (ov) ov.style.display = "none";
+}
+
+function armMgDecodeWatch() {
+  if (mgWatchTimer) { clearInterval(mgWatchTimer); mgWatchTimer = null; }
+  hideMgConvertOverlay();
+  mgFallbackState = "watching";
+  // Only the local raw file can be undecodable; the fallback swaps in a
+  // server-transcoded https: source, and re-entering this screen with it is fine.
+  if (!(mgVideo.src || "").startsWith("blob:")) { mgFallbackState = "done"; return; }
+  const watchedKey = videoKey;
+  let checks = 0;
+  mgWatchTimer = setInterval(() => {
+    if (mgFallbackState !== "watching" || videoKey !== watchedKey ||
+        !(mgVideo.src || "").startsWith("blob:")) {
+      clearInterval(mgWatchTimer); mgWatchTimer = null; return;
+    }
+    checks++;
+    if (mgVideo.error) {
+      clearInterval(mgWatchTimer); mgWatchTimer = null;
+      startMgPlaybackFallback();
+      return;
+    }
+    const frames = mgDecodedFrameCount(mgVideo);
+    const decoded = (frames === null)
+      ? (mgVideo.readyState >= 2 && mgVideo.videoWidth > 0) // no frame-count API: trust readyState
+      : frames > 0;
+    if (decoded) { clearInterval(mgWatchTimer); mgWatchTimer = null; mgFallbackState = "done"; return; }
+    // preload="metadata" means a healthy video may not decode a frame until we
+    // ask for one — nudge a tiny seek so a decodable source proves itself.
+    if (checks === 2 && mgVideo.readyState >= 1) {
+      try { if (mgVideo.currentTime === 0) mgVideo.currentTime = 0.05; } catch (e) {}
+    }
+    // 8s with metadata in but zero frames decoded → this browser can't decode it.
+    // 20s with not even metadata → the element is wedged either way; same rescue.
+    if ((checks >= 8 && mgVideo.readyState >= 1) || checks >= 20) {
+      clearInterval(mgWatchTimer); mgWatchTimer = null;
+      startMgPlaybackFallback();
+    }
+  }, 1000);
+}
+
+async function startMgPlaybackFallback() {
+  if (mgFallbackState === "converting") return;
+  mgFallbackState = "converting";
+  const key = parentVideoKey || videoKey;
+  track("Playback Fallback Started", { video_key: key });
+  showMgConvertOverlay("This video's format can't be previewed in this browser. Finishing upload…");
+  try {
+    if (uploadPromise) await uploadPromise;
+  } catch (err) {
+    mgFallbackState = "failed";
+    showMgConvertOverlay("Upload failed, so the video can't be converted. Please refresh and re-upload.", false);
+    return;
+  }
+  showMgConvertOverlay("Converting your video so it plays in this browser — usually takes a minute or two…");
+  const deadline = Date.now() + 15 * 60 * 1000;
+  let readyUrl = null, ready = false;
+  while (Date.now() < deadline) {
+    try {
+      const resp = await fetch(`${API}/api/normalize-playback`, {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ video_key: key }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status === "ready") { ready = true; readyUrl = data.url || null; break; }
+      }
+    } catch (e) { console.warn("normalize-playback poll failed:", e); }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  if (!ready) {
+    mgFallbackState = "failed";
+    showMgConvertOverlay("Conversion is taking longer than expected. Please try again in a few minutes, or use Safari — it plays this format natively.", false);
+    return;
+  }
+  // Prefer the Firebase download URL: firebasestorage.googleapis.com serves
+  // Access-Control-Allow-Origin:* so later canvas frame grabs stay untainted.
+  // The signed GCS URL from the API is the rules-independent backstop.
+  let url = readyUrl;
+  try {
+    url = await getDownloadURL(ref(fbStorage, `uploaded-videos/${key}.mp4`));
+  } catch (err) {
+    console.warn("getDownloadURL failed, using signed URL fallback:", err);
+  }
+  if (!url) {
+    mgFallbackState = "failed";
+    showMgConvertOverlay("Could not load the converted video — please refresh and try again.", false);
+    return;
+  }
+  // A different upload started while we were converting — leave its player alone.
+  if ((parentVideoKey || videoKey) !== key) return;
+  const t = mgVideo.currentTime || 0;
+  videoBlobUrl = url; // downstream consumers (frame extraction, previews) use the web-safe copy too
+  mgVideo.src = url;
+  mgVideo.load();
+  try { if (t > 0) mgVideo.currentTime = t; } catch (e) {}
+  mgFallbackState = "done";
+  hideMgConvertOverlay();
+  track("Playback Fallback Ready", { video_key: key });
 }
 
 function setMgMode(mode) {
