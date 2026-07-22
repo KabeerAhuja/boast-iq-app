@@ -262,7 +262,107 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
   }
-  
+
+  /* Three-arrow flow stepper (Upload → Label → Tag). Placeholder divs with
+     data-active are filled in by renderFlowSteppers() at load. */
+  .flow-stepper {
+    --fs-notch: 24px;
+    --fs-height: 60px;
+    display: flex;
+    gap: 6px;
+    height: var(--fs-height);
+    margin-bottom: 28px;
+    user-select: none;
+  }
+
+  .fstep {
+    position: relative;
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 20px 0 28px;
+    background: rgba(255,255,255,0.04);
+    color: rgba(255,255,255,0.38);
+    transition: flex .45s cubic-bezier(.4,0,.2,1), background .45s cubic-bezier(.4,0,.2,1), color .45s cubic-bezier(.4,0,.2,1);
+    clip-path: polygon(0 0, calc(100% - var(--fs-notch)) 0, 100% 50%, calc(100% - var(--fs-notch)) 100%, 0 100%, var(--fs-notch) 50%);
+  }
+  .fstep:first-child {
+    clip-path: polygon(0 0, calc(100% - var(--fs-notch)) 0, 100% 50%, calc(100% - var(--fs-notch)) 100%, 0 100%);
+    border-top-left-radius: 10px;
+    border-bottom-left-radius: 10px;
+    padding-left: 22px;
+  }
+  .fstep:last-child {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, var(--fs-notch) 50%);
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+  }
+
+  .fstep .fstep-eyebrow {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    opacity: .75;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .fstep .fstep-eyebrow .fstep-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+  .fstep .fstep-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    margin-top: 3px;
+    white-space: nowrap;
+  }
+  .fstep .fstep-snippet {
+    font-size: 12px;
+    line-height: 1.35;
+    margin-top: 3px;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    transition: max-height .45s cubic-bezier(.4,0,.2,1), opacity .45s cubic-bezier(.4,0,.2,1);
+  }
+  .fstep .fstep-check { display: none; width: 14px; height: 14px; flex: none; }
+
+  .fstep.active {
+    flex-grow: 2.4;
+    background: linear-gradient(120deg, var(--accent) 0%, #0aa8c0 100%);
+    color: #04212b;
+  }
+  .fstep.active .fstep-eyebrow { opacity: .85; }
+  .fstep.active .fstep-snippet { max-height: 2.8em; opacity: .92; }
+  .fstep.active .fstep-dot { box-shadow: 0 0 0 3px rgba(255,255,255,.25); }
+
+  .fstep.done {
+    background: rgba(0, 240, 255, 0.08);
+    color: rgba(0, 240, 255, 0.65);
+  }
+  .fstep.done .fstep-dot { display: none; }
+  .fstep.done .fstep-check { display: inline-block; }
+  .fstep.done .fstep-title { opacity: .85; }
+
+  @media (max-width: 640px) {
+    .flow-stepper { --fs-height: 52px; --fs-notch: 17px; margin-bottom: 22px; }
+    .fstep { padding: 0 12px 0 22px; }
+    .fstep:first-child { padding-left: 15px; }
+    .fstep .fstep-eyebrow { font-size: 9px; letter-spacing: 2px; }
+    .fstep .fstep-title { font-size: 12.5px; }
+    .fstep .fstep-snippet { font-size: 11px; }
+    .fstep.active { flex-grow: 3.2; }
+    .fstep:not(.active) .fstep-title { display: none; }
+  }
+
   .step-title {
     font-family: 'Space Grotesk', sans-serif;
     font-size: 32px;
@@ -4468,7 +4568,7 @@
 
   <!-- Step 1: Upload -->
   <div id="step-upload" class="step">
-    <div class="step-label">Step 1</div>
+    <div class="flow-stepper" data-active="1"></div>
     <div class="step-title">Upload Video</div>
     <div class="step-desc">Upload your squash match video to begin tracking. We support MP4 and MOV files.</div>
     <div class="upload-zone" id="upload-zone">
@@ -4495,7 +4595,7 @@
 
   <!-- Step 2: Player Config -->
   <div id="step-config" class="step">
-    <div class="step-label">Step 2</div>
+    <div class="flow-stepper" data-active="2"></div>
     <div class="step-title">Player Information</div>
     <div class="step-desc">Tag each player. Search for an existing user, just type a name, or send an invite link so they can claim the slot themselves.</div>
     <div class="player-config-grid">
@@ -4566,7 +4666,7 @@
 
   <!-- Step 2.5: Mark Games (with Single/Multi toggle) -->
   <div id="step-mark-games" class="step">
-    <div class="step-label">Step 3</div>
+    <div class="flow-stepper" data-active="3"></div>
     <div class="mg-mode-toggle" role="tablist" aria-label="Game mode">
       <button class="mg-mode-pill active" id="mg-mode-single" role="tab" aria-selected="true" type="button">Single Game</button>
       <button class="mg-mode-pill" id="mg-mode-multi" role="tab" aria-selected="false" type="button">Mark Games</button>
@@ -4613,7 +4713,7 @@
 
   <!-- Step 3: Select Players -->
   <div id="step-select" class="step">
-    <div class="step-label">Step 3</div>
+    <div class="flow-stepper" data-active="3"></div>
     <div class="step-title">Select Players</div>
     <div class="step-desc">Tap <strong>Player 1</strong> below, then tap the frame to drop the marker — tap again to fine-tune its position. Then tap <strong>Player 2</strong> and place it. When both markers are set, start tracking.</div>
     <div class="rotate-hint" id="rotate-hint">↻ Rotate your phone sideways for a bigger view</div>
@@ -13160,6 +13260,30 @@ if (window.__IS_DEMO__) {
     }
   })();
 }
+
+// ---- Three-arrow flow stepper -------------------------------------------
+// Fills every .flow-stepper placeholder with the Upload → Label → Tag arrows.
+// data-active on the placeholder says which step that screen is on; earlier
+// steps render as done (checkmark), later ones as upcoming.
+(function renderFlowSteppers() {
+  const STEPS = [
+    { n: 1, title: "Upload Video",  snippet: "Add your match footage — MP4 or MOV." },
+    { n: 2, title: "Label Players", snippet: "Tell us who’s playing in this match." },
+    { n: 3, title: "Tag Players",   snippet: "Mark the game and tag each player." },
+  ];
+  const CHECK = '<svg class="fstep-check" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M4.8 8.2l2.2 2.2 4-4.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  document.querySelectorAll(".flow-stepper").forEach(wrap => {
+    const active = parseInt(wrap.dataset.active, 10) || 1;
+    wrap.innerHTML = STEPS.map(s => {
+      const state = s.n === active ? " active" : (s.n < active ? " done" : "");
+      return '<div class="fstep' + state + '">' +
+        '<div class="fstep-eyebrow"><span class="fstep-dot"></span>' + CHECK + 'Step ' + s.n + '</div>' +
+        '<div class="fstep-title">' + s.title + '</div>' +
+        '<div class="fstep-snippet">' + s.snippet + '</div>' +
+      '</div>';
+    }).join("");
+  });
+})();
 </script>
 </body>
 </html>
