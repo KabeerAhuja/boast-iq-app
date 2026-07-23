@@ -501,6 +501,65 @@
     box-shadow: 0 0 20px var(--accent-glow);
   }
   
+  /* Upload guard: persistent warning while the source video is still uploading.
+     beforeunload is unreliable on iOS Safari, so this banner is the primary
+     defense against the user leaving mid-upload (which cancels the upload). */
+  .upload-guard {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    background: rgba(240,192,64,0.12);
+    border: 1px solid rgba(240,192,64,0.35);
+    border-radius: 14px;
+    padding: 13px 18px;
+    margin-bottom: 18px;
+  }
+  .upload-guard.active { display: flex; }
+  .guard-dot-wrap { position: relative; width: 12px; height: 12px; flex: none; }
+  .guard-dot {
+    position: absolute; inset: 2px; border-radius: 50%;
+    background: var(--yellow); box-shadow: 0 0 10px rgba(240,192,64,0.8);
+  }
+  .guard-ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid var(--yellow); opacity: 0;
+    animation: guardPulse 1.6s ease-out infinite;
+  }
+  @keyframes guardPulse {
+    0% { transform: scale(.6); opacity: .9; }
+    70% { transform: scale(1.9); opacity: 0; }
+    100% { opacity: 0; }
+  }
+  .guard-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .guard-title { font-family: 'Space Grotesk', sans-serif; font-size: 13.5px; font-weight: 700; color: var(--yellow); }
+  .guard-msg { font-size: 13px; line-height: 1.45; color: var(--text); opacity: .85; }
+  .guard-pct {
+    margin-left: auto; flex: none;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  }
+  .guard-pct b { font-family: 'Space Grotesk', sans-serif; font-size: 17px; font-weight: 700; color: var(--yellow); font-variant-numeric: tabular-nums; }
+  .guard-bar { width: 110px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .guard-bar i { display: block; height: 100%; width: 0%; border-radius: 2px; background: var(--yellow); transition: width .4s ease; }
+  .upload-guard-caption {
+    display: none; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--text-dim); line-height: 1.5; margin-top: 10px;
+  }
+  .upload-guard-caption.active { display: flex; }
+  .upload-guard-caption svg { flex: none; }
+  .btn-spinner {
+    display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+    vertical-align: -2px; margin-right: 8px;
+    border: 2px solid rgba(255,255,255,0.25); border-top-color: var(--text);
+    animation: guardSpin 0.9s linear infinite;
+  }
+  @keyframes guardSpin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .guard-ring, .btn-spinner { animation: none; }
+  }
+  @media (max-width: 640px) {
+    .guard-pct { display: none; }
+  }
+
   .progress-text {
     font-family: 'Space Grotesk', sans-serif;
     font-size: 13px;
@@ -4433,6 +4492,20 @@
 </div>
 
 <div class="container">
+
+  <!-- Upload guard banner: shown on every view while the source video upload is
+       in flight. Leaving/refreshing the page kills the upload, so warn hard. -->
+  <div class="upload-guard" id="upload-guard" role="status" aria-live="polite">
+    <div class="guard-dot-wrap"><span class="guard-ring"></span><span class="guard-dot"></span></div>
+    <div class="guard-text">
+      <div class="guard-title">Upload in progress — keep this page open</div>
+      <div class="guard-msg">Your video is still uploading in the background. Leaving or refreshing this page will cancel the upload and you'll have to start over.</div>
+    </div>
+    <div class="guard-pct">
+      <b id="upload-guard-pct">0%</b>
+      <div class="guard-bar"><i id="upload-guard-bar"></i></div>
+    </div>
+  </div>
   <!-- Step: Home feed -->
   <div id="step-home" class="step">
     <div class="feed-head"><div class="fb-title">This week's <em>highlights</em></div></div>
@@ -4731,6 +4804,14 @@
         <div class="btn-row">
           <button class="btn btn-primary" id="btn-start" disabled>Start Tracking →</button>
           <button class="btn btn-secondary" id="btn-reset-pts">Reset Points</button>
+        </div>
+        <div class="upload-guard-caption" id="upload-guard-caption">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.5 15 14H1L8 1.5Z" stroke="#f0c040" stroke-width="1.4" stroke-linejoin="round"/>
+            <path d="M8 6v3.4" stroke="#f0c040" stroke-width="1.4" stroke-linecap="round"/>
+            <circle cx="8" cy="11.8" r=".9" fill="#f0c040"/>
+          </svg>
+          <span>Tracking will start automatically once the upload finishes — don't close this tab.</span>
         </div>
       </div>
     </div>
@@ -7916,6 +7997,28 @@ let uploadPromise = null;
 let uploadAbort = null;
 let preparePromise = null;
 
+// ---- Upload guard: keep-this-page-open warning while the source upload is in flight ----
+// The in-page banner is the primary defense (beforeunload doesn't fire reliably on
+// iOS Safari); the native leave-confirmation is the backstop everywhere else.
+function _uploadGuardBeforeUnload(e) { e.preventDefault(); e.returnValue = ""; return ""; }
+function showUploadGuard() {
+  document.getElementById("upload-guard").classList.add("active");
+  document.getElementById("upload-guard-caption").classList.add("active");
+  setUploadGuardPct(0);
+  window.addEventListener("beforeunload", _uploadGuardBeforeUnload);
+}
+function setUploadGuardPct(pct) {
+  const num = document.getElementById("upload-guard-pct");
+  const bar = document.getElementById("upload-guard-bar");
+  if (num) num.textContent = `${Math.floor(pct)}%`;
+  if (bar) bar.style.width = pct.toFixed(1) + "%";
+}
+function hideUploadGuard() {
+  document.getElementById("upload-guard").classList.remove("active");
+  document.getElementById("upload-guard-caption").classList.remove("active");
+  window.removeEventListener("beforeunload", _uploadGuardBeforeUnload);
+}
+
 // Downscale a canvas and return its mean luma (0-255). Used to detect a
 // black/blank grab so we never treat one as a good frame. Returns 255 on a
 // CORS/read error so we don't false-positive a real frame as black.
@@ -8205,6 +8308,7 @@ async function handleFile(file) {
   //    first_frame.png upload in parallel. Start Tracking later awaits uploadPromise.
   firebasePath = `uploaded-videos/${videoKey}.mp4`;
   uploadAbort = null;
+  showUploadGuard();
   uploadPromise = (async () => {
     // is_new_upload flags THIS as the one create-job that consumes a free slot; the
     // per-game processing jobs spawned later for the same upload must not (they omit it).
@@ -8255,6 +8359,7 @@ async function handleFile(file) {
       const pct = (loaded / total) * 100;
       progFill.style.width = pct.toFixed(1) + "%";
       progText.textContent = `${fmtMb(loaded)} MB / ${fmtMb(total)} MB (${pct.toFixed(1)}%)`;
+      setUploadGuardPct(pct);
     };
     try {
       const put = uploadViaSignedPut(urlData.upload_url, file, onProg);
@@ -8280,6 +8385,7 @@ async function handleFile(file) {
     }
     progFill.style.width = "100%";
     progText.textContent = "Upload complete.";
+    hideUploadGuard();
     track("Upload Completed", { video_key: videoKey });
     await updateVideoStatus(videoKey, "ready");
 
@@ -8370,6 +8476,7 @@ async function handleFile(file) {
 
   uploadPromise.catch((err) => {
     console.error("Upload failed:", err);
+    hideUploadGuard();
     progText.textContent = `Upload failed: ${err.message}`;
     progText.style.color = "var(--red)";
     updateVideoStatus(videoKey, "failed");
@@ -9315,7 +9422,7 @@ function pollTrackingStatus(videoKeyToPoll, onMessage, opts = {}) {
 
 async function spawnGameJobs() {
   const btnStart = document.getElementById("btn-start");
-  if (btnStart) { btnStart.disabled = true; btnStart.textContent = "Finishing upload…"; }
+  if (btnStart) { btnStart.disabled = true; btnStart.innerHTML = '<span class="btn-spinner"></span>Finishing upload…'; }
   try {
     if (uploadPromise) await uploadPromise;
   } catch (err) {
