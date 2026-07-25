@@ -3811,6 +3811,8 @@
   .dash-stat-unit { font-size: 12px; color: var(--text-dim, #9b9bb0); font-weight: 600; margin-left: 2px; }
   .dash-stats-stack { display: flex; flex-direction: column; gap: 12px; }
   .dash-stat-card-blank { border-style: dashed; background: transparent; opacity: 0.4; }
+  .dash-insight-card { grid-column: 1 / -1; }
+  .dash-insight-text { font-size: 13px; line-height: 1.5; color: var(--text); }
   .dash-egg-card { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
   .dash-egg-title {
     font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--text);
@@ -10370,16 +10372,45 @@ function showResults(msg) {
         card('Egg time', dual(eggFmt(s.eggTimeP1), eggFmt(s.eggTimeP2))),
         card('Recovery time', dual(recFmt(s.recoveryP1), recFmt(s.recoveryP2))),
       ];
+      // AI insight cards (match scope only), full-width under the stat grid:
+      // whole-MATCH summary (parent-level match_insights.json, spans all games
+      // of a multi-game upload) + per-player tendencies for THIS game (from
+      // this game's match_summary). Escape the LLM text.
+      const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const insightCard = (name, dotClass, txt) =>
+        `<div class="dash-stat-card dash-insight-card"><div class="dash-stat-label"><span class="dash-dot ${dotClass}"></span> ${name} — tendencies</div><div class="dash-insight-text">${esc(txt)}</div></div>`;
+      const matchSummaryTxt = dashState.matchInsightsSummary;
+      const insightCards = (scope === 'point') ? [] : [
+        ...(matchSummaryTxt ? [`<div class="dash-stat-card dash-insight-card"><div class="dash-stat-label">Match summary</div><div class="dash-insight-text">${esc(matchSummaryTxt)}</div></div>`] : []),
+        ...(s.tendencyP1 ? [insightCard(dashState.p1Name, 'dash-dot-p1', s.tendencyP1)] : []),
+        ...(s.tendencyP2 ? [insightCard(dashState.p2Name, 'dash-dot-p2', s.tendencyP2)] : []),
+      ];
       body.innerHTML = `<div class="dash-stats-grid">${[
         ...movementCards,
         card('Duration', one(s.duration)),
         card('Total shots', one(s.totalShots)),
         card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
         card('Distance', dual(s.distP1, s.distP2)),
+        ...insightCards,
       ].join('')}</div>`;
     }
 
     async function loadMatchAggregates() {
+      // Whole-match AI summary — parent-level match_insights.json shared by
+      // all games of a multi-game upload. Fire-and-forget; the match panel
+      // re-renders when it lands.
+      if (dashState.matchInsightsSummary === undefined) {
+        dashState.matchInsightsSummary = null;
+        fetch(`${API}/api/match-insights/${encodeURIComponent(videoKey)}`)
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => {
+            if (d && d.matchSummary) {
+              dashState.matchInsightsSummary = d.matchSummary;
+              if (dashState.scope === 'match') renderStatsPanel('match');
+            }
+          })
+          .catch(() => {});
+      }
       try {
         // Cache-first for the index (player names + point count); revalidate lazily.
         let indexData = getCachedIndex(videoKey);
@@ -10458,6 +10489,11 @@ function showResults(msg) {
           eggTimeP2:  (indexData.match_summary || {}).eggTimeP2,
           recoveryP1: (indexData.match_summary || {}).recoveryP1,
           recoveryP2: (indexData.match_summary || {}).recoveryP2,
+          // AI tendency summaries for this game (1-2 sentences per player,
+          // Gemini-generated in the backend match_summary build). The
+          // whole-match summary is fetched separately from /api/match-insights.
+          tendencyP1: (indexData.match_summary || {}).tendencyP1,
+          tendencyP2: (indexData.match_summary || {}).tendencyP2,
         };
         if (dashState.scope === 'match') { renderStatsPanel('match'); renderDashAll(); }
 
