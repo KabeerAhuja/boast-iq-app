@@ -175,6 +175,11 @@
     .brand-logo { width: 28px; height: 28px; }
     .brand-word { font-size: 17px; white-space: nowrap; }
     .btn-back, .btn-header { font-size: 11px; height: 32px; padding: 0 12px; border-radius: 16px; }
+    /* When the row still can't fit, shrink the back button gracefully
+       instead of letting the right-side buttons paint over it. */
+    .header-left { flex: 1 1 auto; min-width: 0; }
+    .header-right { flex: 0 0 auto; }
+    .btn-back { min-width: 0; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 32px; text-align: center; }
   }
   .home-placeholder{color:var(--text-dim);padding:40px 0;text-align:center;}
 
@@ -3801,6 +3806,11 @@
 
   .dash-stats-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  @media (max-width: 640px) {
+    /* Phones: 2 across, 4 down. minmax(0,1fr) lets cards shrink below their
+       min-content width so the grid can't blow out the viewport. */
+    .dash-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   .dash-stat-card {
     background: rgba(255,255,255,0.03);
