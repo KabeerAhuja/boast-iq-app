@@ -8284,6 +8284,25 @@ async function handleFile(file) {
   videoBlobUrl = URL.createObjectURL(file);
   originalFileName = file.name;
 
+  // Detach any previous upload/processing flow still live in this tab. Its
+  // WebSocket/pollers/closures write to the same globals this upload is about
+  // to reuse, which used to cross-wire doc statuses, gcs paths and even the
+  // results view between two videos uploaded in one session.
+  if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+  stopProcessingPreview();
+  stopPhaseCreep();
+  if (uploadAbort) {
+    // A prior upload is still in flight but its flow is now unreachable —
+    // abort it and hide its half-created doc so it doesn't sit in the library
+    // as a forever-"uploading" card.
+    const abandonedKey = videoKey;
+    try { uploadAbort(); } catch (_) {}
+    if (abandonedKey) {
+      updateDoc(doc(fbFirestore, "videos", abandonedKey), { status: "failed", hiddenFromList: true }).catch(() => {});
+    }
+  }
+  uploadAbort = null; uploadPromise = null; preparePromise = null; jobId = null;
+
   // Reset player-tagging state in case the user is starting a second upload in this session.
   player1 = null; player2 = null;
   resetPlayerPickers();
@@ -8344,14 +8363,21 @@ async function handleFile(file) {
   firebasePath = `uploaded-videos/${videoKey}.mp4`;
   uploadAbort = null;
   showUploadGuard();
+  // The upload closure runs for minutes. It must hold its OWN key/path/job id
+  // and never read them back from the globals — a newer upload started in this
+  // tab moves the globals to a different video, and reading them here is what
+  // used to mark the wrong doc "ready" and point tracking at the wrong source.
+  const thisKey = videoKey;
+  let thisPath = firebasePath;
+  const isCurrent = () => videoKey === thisKey;
   uploadPromise = (async () => {
     // is_new_upload flags THIS as the one create-job that consumes a free slot; the
     // per-game processing jobs spawned later for the same upload must not (they omit it).
-    track("Upload Started", { video_key: videoKey, file_size: file.size });
+    track("Upload Started", { video_key: thisKey, file_size: file.size });
     const jobResp = await fetch(`${API}/api/create-job`, {
       method: "POST",
       headers: await authHeaders(),
-      body: JSON.stringify({ filename: file.name, video_key: videoKey, is_new_upload: true }),
+      body: JSON.stringify({ filename: file.name, video_key: thisKey, is_new_upload: true }),
     });
     if (!jobResp.ok) {
       let detail = `HTTP ${jobResp.status}`;
@@ -8364,13 +8390,14 @@ async function handleFile(file) {
         // first). Prompt to subscribe and offer to resume this file afterwards.
         pendingUploadFile = file;
         openUpgradeModal();
-        updateVideoStatus(videoKey, "failed");
+        updateVideoStatus(thisKey, "failed");
         throw new Error("Free uploads used up — subscribe to continue.");
       }
       throw new Error(`Could not create job: ${detail}`);
     }
     const jobData = await jobResp.json();
-    jobId = jobData.job_id;
+    const thisJobId = jobData.job_id;
+    if (isCurrent()) jobId = thisJobId;
     // Reflect the slot just consumed in the local user doc, and nudge non-subscribers
     // with how many free uploads remain.
     if (typeof jobData.free_uploads_remaining === "number") {
@@ -8382,15 +8409,17 @@ async function handleFile(file) {
     const urlResp = await fetch(`${API}/api/get-upload-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job_id: jobId, video_key: videoKey }),
+      body: JSON.stringify({ job_id: thisJobId, video_key: thisKey }),
     });
     const urlData = await urlResp.json();
     if (!urlData.upload_url) throw new Error("Could not obtain upload URL");
 
-    firebasePath = urlData.gcs_path || firebasePath;
+    thisPath = urlData.gcs_path || thisPath;
+    if (isCurrent()) firebasePath = thisPath;
 
     const fmtMb = (n) => (n / 1e6).toFixed(1);
     const onProg = (loaded, total) => {
+      if (!isCurrent()) return; // a newer upload owns the progress UI now
       const pct = (loaded / total) * 100;
       progFill.style.width = pct.toFixed(1) + "%";
       progText.textContent = `${fmtMb(loaded)} MB / ${fmtMb(total)} MB (${pct.toFixed(1)}%)`;
@@ -8398,15 +8427,18 @@ async function handleFile(file) {
     };
     try {
       const put = uploadViaSignedPut(urlData.upload_url, file, onProg);
-      uploadAbort = put.abort;
+      if (isCurrent()) uploadAbort = put.abort;
       await put.promise;
     } catch (err) {
+      // A superseded flow's PUT was deliberately aborted — don't resurrect it
+      // via the resumable fallback.
+      if (!isCurrent()) throw err;
       // Fall back to the Firebase resumable upload via firebasestorage.googleapis.com
       // (already CORS-enabled) if signed-PUT fails.
       console.warn("Signed-PUT upload failed, falling back to resumable upload:", err);
       progText.textContent = "Switching upload method...";
       progFill.style.width = "0%";
-      const storageRef = ref(fbStorage, firebasePath);
+      const storageRef = ref(fbStorage, thisPath);
       const task = uploadBytesResumable(storageRef, file);
       uploadAbort = () => task.cancel();
       await new Promise((resolve, reject) => {
@@ -8418,11 +8450,18 @@ async function handleFile(file) {
         );
       });
     }
+    if (!isCurrent()) {
+      // The bytes landed but a newer upload replaced this flow while it ran —
+      // terminate here so it can't mark itself "ready" or kick off prepare.
+      updateDoc(doc(fbFirestore, "videos", thisKey), { status: "failed", hiddenFromList: true }).catch(() => {});
+      throw new Error("Upload superseded by a newer upload in this tab");
+    }
+    uploadAbort = null;
     progFill.style.width = "100%";
     progText.textContent = "Upload complete.";
     hideUploadGuard();
-    track("Upload Completed", { video_key: videoKey });
-    await updateVideoStatus(videoKey, "ready");
+    track("Upload Completed", { video_key: thisKey });
+    await updateVideoStatus(thisKey, "ready");
 
     // Persist a first_frame.png for the admin landmark-tagging UI + My Videos
     // thumbnail. Prefer the client-extracted frame, but only when it's a real
@@ -8431,36 +8470,38 @@ async function handleFile(file) {
     if (clientFrameOk && clientMeta.frame_blob) {
       try {
         await uploadBytes(
-          ref(fbStorage, `video-data/${videoKey}/first_frame.png`),
+          ref(fbStorage, `video-data/${thisKey}/first_frame.png`),
           clientMeta.frame_blob,
           { contentType: "image/jpeg" }
         );
       } catch (err) {
         console.warn("First frame upload failed; requesting server extraction:", err);
-        triggerServerFirstFrame(videoKey, firebasePath);
+        triggerServerFirstFrame(thisKey, thisPath);
       }
     } else {
       console.warn("Client first frame black/missing — using server-side extraction");
-      triggerServerFirstFrame(videoKey, firebasePath);
+      triggerServerFirstFrame(thisKey, thisPath);
     }
 
     // Kick off /api/prepare in the background NOW, while the user is tagging
     // players. The backend spawns prepare_job and returns immediately with a
     // call_id; we then poll /api/prepare-status until it completes. This avoids
     // Modal's ~150s HTTP request idle timeout on long videos.
-    preparePromise = (async () => {
+    const prep = (async () => {
       const prepResp = await fetch(`${API}/api/prepare`, {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({ job_id: jobId, gcs_path: firebasePath, video_key: videoKey, skip_first_frame: true }),
+        body: JSON.stringify({ job_id: thisJobId, gcs_path: thisPath, video_key: thisKey, skip_first_frame: true }),
       });
       const initial = await prepResp.json();
       if (initial.error) throw new Error(initial.error);
 
       // Fast path: backend already had cached metadata for this job_id.
       if (initial.status === "done") {
-        if (initial.src_width) videoMeta = { ...videoMeta, ...initial };
-        totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+        if (initial.src_width && isCurrent()) {
+          videoMeta = { ...videoMeta, ...initial };
+          totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+        }
         return initial;
       }
 
@@ -8479,7 +8520,7 @@ async function handleFile(file) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            job_id: jobId,
+            job_id: thisJobId,
             call_id: callId,
             first_frame_call_id: firstFrameCallId,
           }),
@@ -8487,23 +8528,27 @@ async function handleFile(file) {
         const s = await statusResp.json();
         if (s.status === "error") throw new Error(s.error || "Prepare failed");
         if (s.status === "done") {
-          if (s.src_width) videoMeta = { ...videoMeta, ...s };
-          totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+          if (s.src_width && isCurrent()) {
+            videoMeta = { ...videoMeta, ...s };
+            totalSrcFrames = videoMeta.total_frames || totalSrcFrames;
+          }
           return s;
         }
         // status === "pending": loop again.
       }
     })();
-    preparePromise.then((r) => {
+    if (isCurrent()) preparePromise = prep;
+    prep.then((r) => {
+      if (!isCurrent()) return; // a newer upload owns the UI/globals now
       // Metadata is back from the server right after upload. If the source carried
       // no recording date, ask the user for it so the activity calendar is accurate.
-      if (r) maybePromptCaptureDate(videoKey, r);
+      if (r) maybePromptCaptureDate(thisKey, r);
       // The Select Players "video-meta" badge may have been rendered with zeros
       // when the client-side grab failed (iOS); refresh it with the authoritative
       // server dimensions/fps/duration now that prepare has folded them in.
       refreshVideoMetaDisplay();
     });
-    preparePromise.catch((err) => {
+    prep.catch((err) => {
       console.warn("Background /api/prepare failed:", err);
       // Don't surface to UI here — startProcessing will report if it really matters.
     });
@@ -8511,10 +8556,12 @@ async function handleFile(file) {
 
   uploadPromise.catch((err) => {
     console.error("Upload failed:", err);
+    if (!isCurrent()) return; // superseded flow — its doc was already failed+hidden
+    uploadAbort = null;
     hideUploadGuard();
     progText.textContent = `Upload failed: ${err.message}`;
     progText.style.color = "var(--red)";
-    updateVideoStatus(videoKey, "failed");
+    updateVideoStatus(thisKey, "failed");
   });
 }
 document.querySelectorAll(".hand-btn").forEach(btn => { btn.addEventListener("click", () => { const player = btn.dataset.player, hand = btn.dataset.hand; document.querySelectorAll(`.hand-btn[data-player="${player}"]`).forEach(b => b.classList.remove("selected")); btn.classList.add("selected"); if (player === "1") playerConfig.player_1.handedness = hand; else playerConfig.player_2.handedness = hand; }); });
@@ -9579,9 +9626,15 @@ async function spawnGameJobs() {
     let gwsFallbackPoller = null;
     const dispatchMsg = (msg) => {
       if (isSingleGame) {
-        jobId = gameJobId;
-        videoKey = gvk;
-        handleWsMessage(msg);
+        // Only drive the live processing UI while this game is still the active
+        // flow in this tab. If the user has since started ANOTHER upload, its
+        // globals (videoKey, videoBlobUrl, results view) must not be hijacked —
+        // just persist this job's terminal status so its library card updates.
+        if (videoKey === gvk) {
+          jobId = gameJobId;
+          handleWsMessage(msg);
+        } else if (msg.type === "complete") updateVideoStatus(gvk, "complete");
+        else if (msg.type === "error") updateVideoStatus(gvk, "failed");
       } else {
         if (msg.type === "complete") updateVideoStatus(gvk, "complete");
         else if (msg.type === "error") updateVideoStatus(gvk, "failed");
@@ -9735,8 +9788,9 @@ async function startProcessing() {
 
   setPhaseProgress(0, 0.8, "Connecting…");
   const wsUrl = `${API.replace("http", "ws")}/ws/${jobId}`; ws = new WebSocket(wsUrl);
-  ws.onopen = () => { setPhaseProgress(0, 0.9, "Connected. Starting tracking…"); track("Tracking Started", { video_key: videoKey }); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: videoKey })); };
-  ws.onmessage = (e) => handleWsMessage(JSON.parse(e.data));
+  const wsKey = videoKey; // messages must not drive the UI if a newer flow took over
+  ws.onopen = () => { setPhaseProgress(0, 0.9, "Connected. Starting tracking…"); track("Tracking Started", { video_key: wsKey }); ws.send(JSON.stringify({ type: "start_processing", player_1: player1, player_2: player2, src_width: videoMeta.src_width, src_height: videoMeta.src_height, src_fps: videoMeta.src_fps, total_frames: videoMeta.total_frames, gcs_path: firebasePath, video_key: wsKey })); };
+  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (videoKey === wsKey) handleWsMessage(m); else if (m.type === "complete") updateVideoStatus(wsKey, "complete"); else if (m.type === "error") updateVideoStatus(wsKey, "failed"); };
   ws.onerror = () => updateOverallProgress(completedSrcFrames / totalSrcFrames * 100, "Connection error...");
   ws.onclose = () => {};
 }
