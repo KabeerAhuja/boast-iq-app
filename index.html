@@ -8031,6 +8031,19 @@ const TRIAL_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 0.5 GB cap for ?trial only
 let uploadPromise = null;
 let uploadAbort = null;
 let preparePromise = null;
+let lastUploadProgress = null; // {loaded, total} of the in-flight source upload
+
+// Label for any UI that blocks on uploadPromise: never a bare "Finishing
+// upload…" — always show how far along the upload actually is, or it reads
+// as frozen on long videos.
+function uploadWaitLabel(prefix = "Finishing upload") {
+  if (lastUploadProgress && lastUploadProgress.total) {
+    const p = lastUploadProgress;
+    const pct = Math.min(100, (p.loaded / p.total) * 100).toFixed(0);
+    return `${prefix}… ${pct}% (${(p.loaded / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB)`;
+  }
+  return `${prefix}…`;
+}
 
 // ---- Upload guard: keep-this-page-open warning while the source upload is in flight ----
 // The in-page banner is the primary defense (beforeunload doesn't fire reliably on
@@ -8218,10 +8231,18 @@ function triggerServerFirstFrame(videoKeyArg, gcsPath) {
 // XHR PUT to a signed URL with progress events. Returns a Promise plus an abort handle.
 function uploadViaSignedPut(signedUrl, file, onProgress) {
   let xhr = new XMLHttpRequest();
+  // A single big PUT with no timeout can hang forever when the connection drops
+  // mid-transfer (Chrome fires no error event — progress just stops). Watch for
+  // 90s of zero progress and abort, so the caller's catch falls back to the
+  // chunked resumable uploader, which retries and resumes on flaky networks.
+  let lastActivity = Date.now();
+  let stalled = false;
+  let stallTimer = null;
   const promise = new Promise((resolve, reject) => {
     xhr.open("PUT", signedUrl, true);
     xhr.setRequestHeader("Content-Type", "video/mp4");
     xhr.upload.onprogress = (e) => {
+      lastActivity = Date.now();
       if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
     };
     xhr.onload = () => {
@@ -8229,9 +8250,12 @@ function uploadViaSignedPut(signedUrl, file, onProgress) {
       else reject(new Error(`Upload failed: HTTP ${xhr.status} ${xhr.responseText || ""}`));
     };
     xhr.onerror = () => reject(new Error("Upload network error"));
-    xhr.onabort = () => reject(new Error("Upload aborted"));
+    xhr.onabort = () => reject(new Error(stalled ? "Upload stalled (no progress for 90s)" : "Upload aborted"));
+    stallTimer = setInterval(() => {
+      if (Date.now() - lastActivity > 90000) { stalled = true; xhr.abort(); }
+    }, 10000);
     xhr.send(file);
-  });
+  }).finally(() => { if (stallTimer) clearInterval(stallTimer); });
   return { promise, abort: () => xhr.abort() };
 }
 
@@ -8302,6 +8326,7 @@ async function handleFile(file) {
     }
   }
   uploadAbort = null; uploadPromise = null; preparePromise = null; jobId = null;
+  lastUploadProgress = null;
 
   // Reset player-tagging state in case the user is starting a second upload in this session.
   player1 = null; player2 = null;
@@ -8420,6 +8445,7 @@ async function handleFile(file) {
     const fmtMb = (n) => (n / 1e6).toFixed(1);
     const onProg = (loaded, total) => {
       if (!isCurrent()) return; // a newer upload owns the progress UI now
+      lastUploadProgress = { loaded, total };
       const pct = (loaded / total) * 100;
       progFill.style.width = pct.toFixed(1) + "%";
       progText.textContent = `${fmtMb(loaded)} MB / ${fmtMb(total)} MB (${pct.toFixed(1)}%)`;
@@ -9084,14 +9110,24 @@ async function startMgPlaybackFallback() {
   mgFallbackState = "converting";
   const key = parentVideoKey || videoKey;
   track("Playback Fallback Started", { video_key: key });
-  showMgConvertOverlay("This video's format can't be previewed in this browser. Finishing upload…");
+  const waitMsg = () =>
+    "This video's format can't be previewed in this browser. " +
+    uploadWaitLabel("It will be converted once the upload finishes — uploading");
+  showMgConvertOverlay(waitMsg());
+  // Refresh the overlay with live upload progress; a static "Finishing upload…"
+  // over a multi-GB phone video reads as frozen.
+  const waitTicker = setInterval(() => {
+    if (mgFallbackState === "converting") showMgConvertOverlay(waitMsg());
+  }, 1000);
   try {
     if (uploadPromise) await uploadPromise;
   } catch (err) {
+    clearInterval(waitTicker);
     mgFallbackState = "failed";
     showMgConvertOverlay("Upload failed, so the video can't be converted. Please refresh and re-upload.", false);
     return;
   }
+  clearInterval(waitTicker);
   showMgConvertOverlay("Converting your video so it plays in this browser — usually takes a minute or two…");
   const deadline = Date.now() + 15 * 60 * 1000;
   let readyUrl = null, ready = false;
@@ -9504,14 +9540,19 @@ function pollTrackingStatus(videoKeyToPoll, onMessage, opts = {}) {
 
 async function spawnGameJobs() {
   const btnStart = document.getElementById("btn-start");
-  if (btnStart) { btnStart.disabled = true; btnStart.innerHTML = '<span class="btn-spinner"></span>Finishing upload…'; }
+  if (btnStart) { btnStart.disabled = true; btnStart.innerHTML = '<span class="btn-spinner"></span>' + uploadWaitLabel(); }
+  const btnTicker = setInterval(() => {
+    if (btnStart && btnStart.disabled) btnStart.innerHTML = '<span class="btn-spinner"></span>' + uploadWaitLabel();
+  }, 1000);
   try {
     if (uploadPromise) await uploadPromise;
   } catch (err) {
+    clearInterval(btnTicker);
     alert(`Upload failed: ${err.message || err}`);
     if (btnStart) { btnStart.disabled = false; btnStart.textContent = "Start Tracking →"; }
     return;
   }
+  clearInterval(btnTicker);
   if (btnStart) btnStart.textContent = "Starting…";
 
   const isSingleGame = gameSegments.length === 1;
@@ -9760,14 +9801,17 @@ async function startProcessing() {
   // Block until the source video upload finishes — prepare was already kicked off
   // in the background as part of the upload promise, so we wait on it after.
   if (uploadPromise) {
-    setPhaseProgress(0, 0.1, "Finishing upload…");
+    setPhaseProgress(0, 0.1, uploadWaitLabel());
+    const phaseTicker = setInterval(() => setPhaseProgress(0, 0.1, uploadWaitLabel()), 1000);
     try {
       await uploadPromise;
     } catch (err) {
+      clearInterval(phaseTicker);
       updateOverallProgress(0, `Upload failed: ${err.message}`);
       updateVideoStatus(videoKey, "failed");
       return;
     }
+    clearInterval(phaseTicker);
   }
   if (preparePromise) {
     setPhaseProgress(0, 0.5, "Preparing video on server…");
