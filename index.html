@@ -4136,7 +4136,7 @@
   // security rules (so anonymous visitors can play it) and serves video/mp4 with HTTP
   // range support (206) for Safari. NOTE: we deliberately do NOT use getDownloadURL()
   // in demo mode — that does a rules-gated metadata read first and 403s for anon users.
-  window.__DEMO_VIDEO_URL__ = 'https://firebasestorage.googleapis.com/v0/b/boastiq.firebasestorage.app/o/uploaded-videos%2Fconrad_tall_dude_1_74492d1a_2026-07-03_17-39-34.mp4?alt=media&token=d7be742a-7208-41d7-939b-89bbf5d233a8';
+  window.__DEMO_VIDEO_URL__ = 'https://firebasestorage.googleapis.com/v0/b/boastiq-73e0c.firebasestorage.app/o/uploaded-videos%2Fconrad_tall_dude_1_74492d1a_2026-07-03_17-39-34.mp4?alt=media&token=d7be742a-7208-41d7-939b-89bbf5d233a8';
   if (window.__IS_DEMO__) document.body.classList.add('demo-mode');
   if (window.__IS_TRIAL__) document.body.classList.add('trial-mode');
 </script>
@@ -5013,12 +5013,12 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOu
 import { getFirestore, collection, query, where, orderBy, getDocs, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, arrayUnion, arrayRemove, limit, writeBatch, startAt, endAt } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBa60PoCLm9ggt-7WDHBT3n_WfNggIaXKw",
-  authDomain: "boastiq.firebaseapp.com",
-  projectId: "boastiq",
-  storageBucket: "boastiq.firebasestorage.app",
-  messagingSenderId: "1002696629084",
-  appId: "1:1002696629084:web:94a6eb513e7261dc75ff99"
+  apiKey: "AIzaSyCGTOvgKZBqkVm5E-RHGGVB5uf0D8J4hBs",
+  authDomain: "boastiq-73e0c.firebaseapp.com",
+  projectId: "boastiq-73e0c",
+  storageBucket: "boastiq-73e0c.firebasestorage.app",
+  messagingSenderId: "585467845484",
+  appId: "1:585467845484:web:faaa734c235daed2de7149"
 };
 const fbApp = initializeApp(firebaseConfig);
 const fbStorage = getStorage(fbApp);
