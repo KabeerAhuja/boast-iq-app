@@ -1353,7 +1353,78 @@
     padding: 6px 14px;
     border-radius: 20px;
   }
-  
+
+  /* ---- FS-0003 Highlights strip (SwingVision-style preset reels) ---- */
+  .pv-highlights-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 24px;
+    backdrop-filter: blur(20px);
+    margin-bottom: 24px;
+  }
+  .pv-highlights-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 16px;
+  }
+  .pv-highlights-header h3 {
+    font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .pv-highlights-header h3::before {
+    content: ''; width: 8px; height: 8px; background: var(--pink);
+    border-radius: 50%; box-shadow: 0 0 12px var(--pink);
+  }
+  .pv-hl-filters { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; font-size: 13px; white-space: nowrap; }
+  .pv-hl-filters-icon { font-size: 13px; line-height: 1; }
+  .pv-highlights-scroller {
+    display: flex; gap: 14px; overflow-x: auto; padding: 4px 2px 10px;
+    scroll-snap-type: x proximity;
+  }
+  .pv-highlights-scroller::-webkit-scrollbar { height: 8px; }
+  .pv-highlights-scroller::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 4px; }
+  .pv-hl-card {
+    flex: 0 0 auto; width: 190px; text-align: left; scroll-snap-align: start;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 0; cursor: pointer; overflow: hidden;
+    font-family: inherit; color: var(--text); transition: .15s;
+    display: flex; flex-direction: column;
+  }
+  .pv-hl-card:hover:not(:disabled) { border-color: var(--border-bright); transform: translateY(-2px); }
+  .pv-hl-card.active { border-color: var(--pink); box-shadow: 0 0 0 1px var(--pink), 0 8px 24px rgba(236,72,153,0.25); }
+  .pv-hl-card.is-empty, .pv-hl-card:disabled { opacity: 0.4; cursor: default; }
+  .pv-hl-card-thumb {
+    height: 92px; position: relative;
+    background: linear-gradient(135deg, rgba(0,240,255,0.10), rgba(236,72,153,0.14));
+    display: flex; align-items: flex-end; padding: 10px;
+  }
+  .pv-hl-card.active .pv-hl-card-thumb { background: linear-gradient(135deg, rgba(236,72,153,0.24), rgba(0,240,255,0.14)); }
+  .pv-hl-card-tag {
+    font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
+    color: var(--text); background: rgba(0,0,0,0.45); padding: 3px 8px; border-radius: 20px;
+  }
+  .pv-hl-card-title {
+    font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600;
+    padding: 12px 12px 4px; line-height: 1.25;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pv-hl-card-count {
+    font-size: 11px; letter-spacing: 0.08em; color: var(--text-dim);
+    padding: 0 12px 12px; text-transform: uppercase;
+  }
+  .pv-highlights-loading { color: var(--text-dim); font-size: 13px; padding: 18px 4px; }
+  .pv-hl-reel-banner {
+    margin-top: 14px; font-size: 13px; color: var(--text-dim);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .pv-hl-reel-banner strong { color: var(--text); }
+  .pv-hl-reel-exit {
+    background: var(--surface-hover); border: 1px solid var(--border-bright);
+    color: var(--accent); padding: 5px 12px; border-radius: 20px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+  }
+  .pv-hl-reel-exit:hover { background: var(--surface); }
+
   .pv-points-list {
     max-height: 500px;
     overflow-y: auto;
@@ -4991,6 +5062,9 @@
         </div>
       </div>
     </div>
+
+    <!-- FS-0003 highlights strip: preset per-player reels, filled by renderHighlights() -->
+    <div class="pv-highlights-section" id="pv-highlights"></div>
 
     <div class="pv-points-section">
       <div class="pv-points-header">
@@ -9917,6 +9991,14 @@ function showResults(msg) {
     let currentPointIndex = 0;
     let pointWinners = {};  // point_number → 'player_1' | 'player_2' (winner of that point)
 
+    // ---- FS-0003 highlights / reel state ----
+    // activeHighlight: null in normal (global) point-by-point mode, or
+    // { key, label, pointNumbers[] } while a preset "reel" is playing.
+    // reelCursor indexes into the reel's CHRONOLOGICAL point order.
+    let activeHighlight = null;
+    let reelCursor = 0;
+    let highlightPresets = [];   // last-computed 5 preset cards (for click lookup)
+
     if (videoBlobUrl) {
       // Show the loading spinner until playback is actually ready, then swap to
       // the video — never a frozen first frame that reads as "broken".
@@ -10577,6 +10659,10 @@ function showResults(msg) {
         pointWinners = computeAllWinners(ralliesMap, totalPoints);
         applyPointWinners();
 
+        // Rallies + movementPerPoint are now in memory → the highlights strip
+        // can rank distance/pressure/duration for real.
+        try { renderHighlights(); } catch (_) {}
+
         if (allRallies.length === 0) return;
 
         const durations = allRallies.map(r => r.duration_sec || 0);
@@ -11134,6 +11220,10 @@ function showResults(msg) {
     
     // Start loading match overview after points are loaded
     setTimeout(() => loadMatchAggregates(), 1000);
+    // Paint the highlights strip's loading state as soon as the closure has
+    // finished initializing (deferred so pointRallyCache/dashState exist);
+    // loadMatchAggregates() repaints it with real data once rallies land.
+    queueMicrotask(() => { try { renderHighlights(); } catch (_) {} });
     
     function formatTime(sec) {
       const m = Math.floor(sec / 60);
@@ -11240,6 +11330,9 @@ function showResults(msg) {
       // details instead — see below.)
       pvList.querySelectorAll(".pv-point-header").forEach(header => {
         header.addEventListener("click", (e) => {
+          // Picking a point from the full list is an explicit "show me everything"
+          // action — leave reel mode so navigation isn't snapped back into the set.
+          if (activeHighlight) exitReel();
           const pointItem = header.parentElement;
           const idx = parseInt(pointItem.dataset.index);
           currentPointIndex = idx;
@@ -11280,6 +11373,209 @@ function showResults(msg) {
 
       // Winner labels may already be known (list re-render); paint them in.
       applyPointWinners();
+    }
+
+    // ========================================================================
+    // FS-0003 — Highlights ranking module (pure, game-scoped, future-proof).
+    //
+    // PRESSURE SEMANTIC (verified against backend, compute_all_stats.py +
+    // Modal_app.py:6114 field guide): movementPerPoint[].pressureP1/P2 is a
+    // "0-100 physical pressure score (higher = that player was made to work
+    // harder)", derived from THAT player's own kinematics. So pressureP1 = how
+    // hard P1 was made to work = pressure P1 is UNDER. The "Highlights — P1"
+    // card wants the pressure P1 APPLIES to the opponent → that is how hard P2
+    // was made to work → the OPPONENT's field (pressureP2). Hence a player's
+    // highlights rank by the opponent's pressure value. (See handoff doc.)
+    //
+    // Every ranker takes already-loaded, in-memory data for the current scope
+    // (this game's rallies / movement) and returns an array of point_numbers,
+    // ranked best-first. A future "all games together" mode can feed aggregated
+    // rallies/movement to the SAME functions without any change here.
+    // ========================================================================
+    const HighlightsRanking = {
+      // rallyList: array of rally JSON objects (each has point_number, duration_sec, movement).
+      topByDuration(rallyList, n = 5) {
+        return (rallyList || [])
+          .filter(r => r && r.duration_sec != null)
+          .slice().sort((a, b) => (b.duration_sec || 0) - (a.duration_sec || 0))
+          .slice(0, n).map(r => r.point_number);
+      },
+      // player: 1 or 2. Ranks by pressure the player APPLIED to the opponent
+      // (see semantic note above → uses the OPPONENT's stored pressure field).
+      topByPressureApplied(movementPerPoint, player, n = 5) {
+        const oppField = player === 1 ? 'pressureP2' : 'pressureP1';
+        return (movementPerPoint || [])
+          .filter(e => e && e.point_number != null && e[oppField] != null)
+          .slice().sort((a, b) => b[oppField] - a[oppField])
+          .slice(0, n).map(e => e.point_number);
+      },
+      // player: 1 or 2. Meters covered in the point from the dense 5 Hz track.
+      topByDistance(rallyList, player, n = 5) {
+        const key = player === 1 ? 'player_1' : 'player_2';
+        return (rallyList || [])
+          .map(r => ({ pn: r && r.point_number, d: movementDistance(r, key) }))
+          .filter(x => x.pn != null && x.d != null)
+          .sort((a, b) => b.d - a.d)
+          .slice(0, n).map(x => x.pn);
+      },
+    };
+
+    // Assemble the 5 preset cards from whatever is currently loaded in memory.
+    // Distance/duration read the rally cache; pressure reads movementPerPoint.
+    function computeHighlightPresets() {
+      const rallyList = Object.values(pointRallyCache).filter(Boolean);
+      const mpp = dashState.movementPerPoint || [];
+      const p1 = dashState.p1Name || 'Player 1';
+      const p2 = dashState.p2Name || 'Player 2';
+      return [
+        { key: 'tiring_p1', label: `Most Tiring — ${p1}`, tag: 'Distance',
+          pointNumbers: HighlightsRanking.topByDistance(rallyList, 1) },
+        { key: 'tiring_p2', label: `Most Tiring — ${p2}`, tag: 'Distance',
+          pointNumbers: HighlightsRanking.topByDistance(rallyList, 2) },
+        { key: 'hl_p1', label: `Highlights — ${p1}`, tag: 'Pressure',
+          pointNumbers: HighlightsRanking.topByPressureApplied(mpp, 1) },
+        { key: 'hl_p2', label: `Highlights — ${p2}`, tag: 'Pressure',
+          pointNumbers: HighlightsRanking.topByPressureApplied(mpp, 2) },
+        { key: 'longest', label: 'Longest Rallies', tag: 'Duration',
+          pointNumbers: HighlightsRanking.topByDuration(rallyList) },
+      ];
+    }
+
+    const escHl = t => String(t == null ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Paint the highlights strip. Distance/duration/pressure all come from data
+    // loaded by loadMatchAggregates (rally cache + movementPerPoint), so until
+    // the rally cache has landed we show a loading state rather than empty/wrong
+    // lists (the distance cards would otherwise read as "0 points").
+    function renderHighlights() {
+      const host = document.getElementById('pv-highlights');
+      if (!host) return;
+      const ralliesReady = Object.keys(pointRallyCache).length > 0;
+      highlightPresets = computeHighlightPresets();
+
+      const filtersBtn =
+        `<button class="btn btn-secondary pv-hl-filters" id="pv-hl-filters"${activeHighlight ? '' : ' disabled'} ` +
+        `title="${activeHighlight ? 'Clear the reel and return to all points' : 'Play a preset reel by tapping a card'}">` +
+        `<span class="pv-hl-filters-icon">⛃</span><span>${activeHighlight ? 'Clear reel' : 'Filters'}</span></button>`;
+
+      if (!ralliesReady) {
+        host.innerHTML =
+          `<div class="pv-highlights-header"><h3>Highlights</h3>${filtersBtn}</div>` +
+          `<div class="pv-highlights-loading">Building highlights from movement data…</div>`;
+        wireHighlights();
+        return;
+      }
+
+      const cards = highlightPresets.map(preset => {
+        const count = preset.pointNumbers.length;
+        const isActive = !!(activeHighlight && activeHighlight.key === preset.key);
+        const disabled = count === 0;
+        return `<button class="pv-hl-card${isActive ? ' active' : ''}${disabled ? ' is-empty' : ''}" ` +
+          `data-key="${preset.key}"${disabled ? ' disabled' : ''}>` +
+          `<div class="pv-hl-card-thumb"><span class="pv-hl-card-tag">${escHl(preset.tag)}</span></div>` +
+          `<div class="pv-hl-card-title">${escHl(preset.label)}</div>` +
+          `<div class="pv-hl-card-count">${count} point${count === 1 ? '' : 's'}</div>` +
+          `</button>`;
+      }).join('');
+
+      const banner = activeHighlight
+        ? `<div class="pv-hl-reel-banner">Reel: <strong>${escHl(activeHighlight.label)}</strong> — ` +
+          `point ${reelCursor + 1} of ${reelIndices().length}.` +
+          `<button class="pv-hl-reel-exit" id="pv-hl-reel-exit">↩ Back to all points</button></div>`
+        : '';
+
+      host.innerHTML =
+        `<div class="pv-highlights-header"><h3>Highlights</h3>${filtersBtn}</div>` +
+        `<div class="pv-highlights-scroller">${cards}</div>${banner}`;
+      wireHighlights();
+    }
+
+    function wireHighlights() {
+      const host = document.getElementById('pv-highlights');
+      if (!host) return;
+      host.querySelectorAll('.pv-hl-card').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const preset = highlightPresets.find(p => p.key === btn.dataset.key);
+          if (preset && preset.pointNumbers.length && typeof enterReel === 'function') enterReel(preset);
+        });
+      });
+      const fbtn = document.getElementById('pv-hl-filters');
+      if (fbtn) fbtn.addEventListener('click', () => { if (activeHighlight && typeof exitReel === 'function') exitReel(); });
+      const exitBtn = document.getElementById('pv-hl-reel-exit');
+      if (exitBtn) exitBtn.addEventListener('click', () => { if (typeof exitReel === 'function') exitReel(); });
+    }
+
+    // ---- Reel navigation ---------------------------------------------------
+    // The reel is a set of point_numbers played CHRONOLOGICALLY. reelIndices()
+    // maps them to indices into the time-ordered `points[]` so all the existing
+    // machinery (goToPoint/setCurrentPoint/highlightCurrentPoint) keeps working;
+    // reelCursor is the position within that chronological list.
+    function reelIndices() {
+      if (!activeHighlight) return [];
+      return activeHighlight.pointNumbers
+        .map(pn => points.findIndex(p => p.point_number === pn))
+        .filter(i => i >= 0)
+        .sort((a, b) => a - b);
+    }
+
+    // Seek+play a reel entry and lock the dashboard/heatmap to it.
+    function playReelAt(cursor) {
+      const idxs = reelIndices();
+      if (!idxs.length) return;
+      reelCursor = Math.max(0, Math.min(idxs.length - 1, cursor));
+      currentPointIndex = idxs[reelCursor];
+      goToPoint(currentPointIndex);
+      setCurrentPoint(currentPointIndex);
+      updateButtons();
+      renderHighlights();   // refresh active-card + "point X of N" banner
+    }
+
+    function enterReel(preset) {
+      if (!preset || !preset.pointNumbers.length) return;
+      activeHighlight = { key: preset.key, label: preset.label, pointNumbers: preset.pointNumbers.slice() };
+      reelCursor = 0;
+      if (!reelIndices().length) { activeHighlight = null; return; }
+      playReelAt(0);   // start from the chronologically-first point in the set
+    }
+
+    function exitReel() {
+      activeHighlight = null;
+      reelCursor = 0;
+      updateButtons();
+      renderHighlights();
+    }
+
+    // Scoped Next/Prev step — clamps at both ends of the reel.
+    function reelStep(delta) {
+      const idxs = reelIndices();
+      if (!idxs.length) return;
+      const next = Math.max(0, Math.min(idxs.length - 1, reelCursor + delta));
+      if (next === reelCursor) return;
+      playReelAt(next);
+    }
+
+    // Reel-aware timeupdate reconciler: keeps "current point" inside the reel
+    // set and, when a reel point finishes, advances to the NEXT reel point
+    // (skipping the out-of-set points in between) rather than the next global
+    // point. A point "ends" at the next GLOBAL point's start — the same
+    // boundary the normal reconciler uses.
+    function reconcileReel() {
+      const idxs = reelIndices();
+      if (!idxs.length) return;
+      if (reelCursor > idxs.length - 1) reelCursor = idxs.length - 1;
+      const gIdx = idxs[reelCursor];
+      const endBound = (gIdx + 1 < points.length) ? points[gIdx + 1].timestamp_sec - 1 : Infinity;
+      if (pvVideo.currentTime >= endBound) {
+        if (reelCursor < idxs.length - 1) playReelAt(reelCursor + 1);
+        else pvVideo.pause();   // end of reel — don't fall through into the match
+        return;
+      }
+      // Within the current reel point: keep the highlight/heatmap/stats locked.
+      if (currentPointIndex !== gIdx) { currentPointIndex = gIdx; highlightCurrentPoint({ scroll: false }); }
+      const want = points[gIdx].point_number;
+      const loaded = dashState.currentPointData && dashState.currentPointData.point_number;
+      if (loaded !== want) setCurrentPoint(gIdx);
     }
 
     async function shareClipForPoint(pointNumber, btnEl) {
@@ -11832,6 +12128,12 @@ function showResults(msg) {
     }
     
     function updateButtons() {
+      if (activeHighlight) {
+        const n = reelIndices().length;
+        pvPrev.disabled = reelCursor <= 0;
+        pvNext.disabled = reelCursor >= n - 1;
+        return;
+      }
       pvPrev.disabled = currentPointIndex === 0;
       pvNext.disabled = currentPointIndex === points.length - 1;
     }
@@ -11856,21 +12158,26 @@ function showResults(msg) {
     pvVideo.addEventListener("pause", () => { pvPlay.innerHTML = "▶ Play"; stopDashLoop(); renderDashAll(); });
     pvVideo.addEventListener("seeking", () => { renderDashAll(); });
     pvVideo.addEventListener("timeupdate", () => {
-      for (let i = points.length - 1; i >= 0; i--) {
-        if (pvVideo.currentTime >= points[i].timestamp_sec - 1) {
-          if (currentPointIndex !== i) {
-            currentPointIndex = i;
-            highlightCurrentPoint({ scroll: false });
+      if (activeHighlight) {
+        // Reel active → keep playback/sync scoped to the reel set.
+        reconcileReel();
+      } else {
+        for (let i = points.length - 1; i >= 0; i--) {
+          if (pvVideo.currentTime >= points[i].timestamp_sec - 1) {
+            if (currentPointIndex !== i) {
+              currentPointIndex = i;
+              highlightCurrentPoint({ scroll: false });
+            }
+            // Keep the live heatmap's data locked to the point under the playhead.
+            // Re-trigger whenever the loaded rally isn't this point yet — this
+            // self-heals a setCurrentPoint() whose fetch earlier failed or stalled,
+            // so the heatmap can't stay frozen until the user manually navigates.
+            // In-flight dedup (setCurrentPoint) keeps this from spamming the network.
+            const want = points[i].point_number;
+            const loaded = dashState.currentPointData && dashState.currentPointData.point_number;
+            if (loaded !== want) setCurrentPoint(i);
+            break;
           }
-          // Keep the live heatmap's data locked to the point under the playhead.
-          // Re-trigger whenever the loaded rally isn't this point yet — this
-          // self-heals a setCurrentPoint() whose fetch earlier failed or stalled,
-          // so the heatmap can't stay frozen until the user manually navigates.
-          // In-flight dedup (setCurrentPoint) keeps this from spamming the network.
-          const want = points[i].point_number;
-          const loaded = dashState.currentPointData && dashState.currentPointData.point_number;
-          if (loaded !== want) setCurrentPoint(i);
-          break;
         }
       }
       updateButtons();
@@ -11911,8 +12218,14 @@ function showResults(msg) {
     }
 
     pvPlay.addEventListener("click", () => { if (pvVideo.paused) pvVideo.play(); else pvVideo.pause(); });
-    pvPrev.addEventListener("click", () => { if (currentPointIndex > 0) { currentPointIndex--; goToPoint(currentPointIndex); setCurrentPoint(currentPointIndex); } });
-    pvNext.addEventListener("click", () => { if (currentPointIndex < points.length - 1) { currentPointIndex++; goToPoint(currentPointIndex); setCurrentPoint(currentPointIndex); } });
+    pvPrev.addEventListener("click", () => {
+      if (activeHighlight) { reelStep(-1); return; }
+      if (currentPointIndex > 0) { currentPointIndex--; goToPoint(currentPointIndex); setCurrentPoint(currentPointIndex); }
+    });
+    pvNext.addEventListener("click", () => {
+      if (activeHighlight) { reelStep(1); return; }
+      if (currentPointIndex < points.length - 1) { currentPointIndex++; goToPoint(currentPointIndex); setCurrentPoint(currentPointIndex); }
+    });
 
     function isTypingTarget(t) {
       if (!t) return false;
