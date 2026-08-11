@@ -14168,7 +14168,7 @@ if (window.__IS_DEMO__) {
           <div class="asf-scanline" id="asf-scanline"><span class="asf-spin"></span><span class="asf-chk">✓</span><span id="asf-scanText">Scanning for players on court…</span></div>
         </div>
       </div>
-      <div class="asf-note" id="asf-simnote" hidden>Preview — the auto-segment scanner isn’t deployed yet, so detection here is simulated. Wiring in the handoff.</div>
+      <div class="asf-note" id="asf-simnote" hidden>Preview — no scanned video in this session, so the games and players shown here are simulated. A real upload runs the live scanner.</div>
     </section>
 
     <section class="asf-screen" data-screen="2" aria-label="Name players">
@@ -14241,8 +14241,16 @@ if (window.__IS_DEMO__) {
   // (badge stays "Preview", a warning note is shown). Step 4 progress polls the
   // REAL, deployed GET ${API}/api/tracking-status/{videoKey} when a real
   // videoKey is present.
-  const AUTO_SEGMENT_ENABLED = false;  // <-- GATE: operator flips true once the scan endpoint ships
-  const API_BASE = (typeof API !== 'undefined' && API) ? API : 'https://boast-iq-dev--boastiq-tracker-web.modal.run';
+  // GATE: the operator can flip this back to false to instantly disable the
+  // auto-segment intake (falls back to the manual upload flow) without a redeploy
+  // of the backend. The interactive scan endpoints (/api/autoseg/*) are live.
+  const AUTO_SEGMENT_ENABLED = true;
+  const _q = (() => { try { return new URLSearchParams(location.search); } catch(_) { return new URLSearchParams(); } })();
+  // API_BASE resolves to the app's global API; ?api=<url> overrides it for local
+  // testing against an ephemeral `modal serve` URL. realVideoKey can be injected
+  // via ?autoseg=<videoKey> to run the REAL scan on an already-uploaded video
+  // (used for verification and as the seam a real upload sets once wired).
+  const API_BASE = (_q.get('api')) || ((typeof API !== 'undefined' && API) ? API : 'https://boast-iq-dev--boastiq-tracker-web.modal.run');
 
   const overlay = document.getElementById('asf-overlay');
   if (!overlay) return;
@@ -14250,8 +14258,13 @@ if (window.__IS_DEMO__) {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   let step = 1, uploadDone = false, swapped = false, trackTimer = null, trackVal = 0, pollTimer = null;
-  let realVideoKey = null;      // set when wired to a real upload; null in preview
+  // ?autoseg=<videoKey> injects a real, already-uploaded key so the real scan
+  // runs (verification + the seam a real upload will set). Bare ?autoseg (value
+  // "") stays null → preview. A real upload wiring should set realVideoKey here.
+  let realVideoKey = (_q.get('autoseg') || '').trim() || null;
   let simulated = true;         // true until a real scan endpoint answers
+  let scanData = null;          // full real scan response (players, crops, seed frame)
+  let confirmSent = false;      // guard so /api/autoseg/confirm fires once
   let games = [ [0,648],[756,1570],[1700,2225],[2380,3073] ], DUR = 3073;  // sim fallback spans
   const names = { 1:'', 2:'' };
   const nm = i => (names[i]||'').trim() || ('Player '+i);
@@ -14318,7 +14331,7 @@ if (window.__IS_DEMO__) {
     nextBtn.textContent = step === 1 ? 'Continue' : step === 2 ? 'Match players →' : step === 3 ? 'Start tracking →' : 'Finish';
     nextBtn.disabled = (step === 1 && !uploadDone);
     if (step === 3) renderWho();
-    if (step === 4) startTracking(); else stopTracking();
+    if (step === 4){ sendConfirm(); startTracking(); } else stopTracking();
   }
 
   /* ---- step 1: upload + detect ----
@@ -14357,21 +14370,38 @@ if (window.__IS_DEMO__) {
     const t = setInterval(() => { p += Math.random()*22 + 8; if (p >= 100){ p = 100; clearInterval(t); bar.style.width = '100%'; finishUp(); } else bar.style.width = p + '%'; }, 160);
   }
 
-  // Attempt the intended real scan endpoint; fall back to the simulated spans.
+  // Run the REAL interactive scan: POST /api/autoseg/scan spawns the ~1–2 min GPU
+  // whole-match scan and returns a call_id; we poll /api/autoseg/scan-status until
+  // it returns the detected games + the two players' seed boxes/crops. Any failure
+  // (no key, endpoint down, timeout, soft error) falls back to the labelled
+  // simulated spans so the flow never dead-ends.
   async function detectPlayers(){
     if (realVideoKey){
       try {
-        const r = await fetch(`${API_BASE}/api/auto-segment/${encodeURIComponent(realVideoKey)}`);
-        if (r.ok){
-          const d = await r.json();
-          if (d && d.status === 'ok' && Array.isArray(d.games) && d.games.length){
-            games = d.games.map(g => [Math.round(g.start_sec||0), Math.round(g.end_sec||0)]);
-            DUR = games[games.length-1][1] || DUR;
-            simulated = false;
-            return d;
+        const sp = await fetch(`${API_BASE}/api/autoseg/scan`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoKey: realVideoKey })
+        }).then(r => r.ok ? r.json() : null);
+        const callId = sp && sp.call_id;
+        if (callId){
+          // poll up to ~4 min (5s cadence)
+          for (let i = 0; i < 48; i++){
+            const d = await fetch(`${API_BASE}/api/autoseg/scan-status`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ call_id: callId })
+            }).then(r => r.json()).catch(() => null);
+            if (d && d.status === 'ok' && Array.isArray(d.games) && d.games.length){
+              scanData = d;
+              games = d.games.map(g => [Math.round(g.start_sec||0), Math.round(g.end_sec||0)]);
+              DUR = games[games.length-1][1] || DUR;
+              simulated = false;
+              return d;
+            }
+            if (d && d.status && d.status !== 'scanning') break;  // hard error → simulate
+            await new Promise(res => setTimeout(res, 5000));
           }
         }
-      } catch(_){ /* endpoint not deployed → simulate */ }
+      } catch(_){ /* endpoint unreachable → simulate */ }
     }
     simulated = true;
     return null;
@@ -14380,13 +14410,45 @@ if (window.__IS_DEMO__) {
   /* ---- step 3: assign names to boxes ---- */
   const coralIdx = () => swapped ? 2 : 1;
   const azureIdx = () => swapped ? 1 : 2;
+  // Real crops/seed-frame come from the scan (data-URLs); the coral chip always
+  // shows the detected player_1 box and azure the player_2 box — Swap only moves
+  // which NAME sits on which box, so the crops stay put.
+  const pImg = (u, c) => u
+    ? `<img src="${u}" alt="detected player" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block">`
+    : boxCrop(c);
   function renderWho(){
-    $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
-      court({ p1:[30,62], p2:[68,48], labels:[nm(coralIdx()), nm(azureIdx())] });
-    $('asf-chipCoral').innerHTML = boxCrop('var(--asf-p1)');
-    $('asf-chipAzure').innerHTML = boxCrop('var(--asf-p2)');
+    const pl = scanData && Array.isArray(scanData.players) ? scanData.players : null;
+    if (pl && !simulated && scanData.seed_frame_url){
+      $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
+        `<img src="${scanData.seed_frame_url}" alt="Seed frame with both players boxed" style="width:100%;height:100%;object-fit:contain;background:#0b0e12;border-radius:inherit;display:block">`;
+    } else {
+      $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
+        court({ p1:[30,62], p2:[68,48], labels:[nm(coralIdx()), nm(azureIdx())] });
+    }
+    $('asf-chipCoral').innerHTML = pImg(pl && pl[0] && pl[0].crop, 'var(--asf-p1)');
+    $('asf-chipAzure').innerHTML = pImg(pl && pl[1] && pl[1].crop, 'var(--asf-p2)');
     $('asf-coralName').textContent = nm(coralIdx());
     $('asf-azureName').textContent = nm(azureIdx());
+  }
+
+  // Persist the confirmed names/handedness for the auto-segmented upload. The
+  // coral box is the detected player_1 and azure is player_2; Swap decides which
+  // typed name maps to which box. Fire-and-forget: tracking start does not block
+  // on it, and it only runs for a real (non-simulated) scan.
+  function sendConfirm(){
+    if (confirmSent || simulated || !realVideoKey) return;
+    confirmSent = true;
+    const body = {
+      videoKey: realVideoKey,
+      player_1: { name: nm(coralIdx()) },   // name matched to the coral (player_1) box
+      player_2: { name: nm(azureIdx()) },   // name matched to the azure (player_2) box
+    };
+    try {
+      fetch(`${API_BASE}/api/autoseg/confirm`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).catch(() => { confirmSent = false; });
+    } catch(_) { confirmSent = false; }
   }
   $('asf-swap').addEventListener('click', () => { swapped = !swapped; renderWho(); });
   $('asf-name1').addEventListener('input', e => { names[1] = e.target.value; });
