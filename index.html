@@ -14003,5 +14003,456 @@ if (window.__IS_DEMO__) {
   });
 })();
 </script>
+
+<!-- ===================================================================== -->
+<!-- FS-0004 Auto-segment intake flow (GATED PREVIEW — ships HIDDEN).       -->
+<!-- Upload → name players → match each name to a detected box → watch      -->
+<!-- tracking. Fully namespaced (#asf-overlay / .asf-*) so nothing here     -->
+<!-- touches the live app's styles or ids. Opened only via ?autoseg         -->
+<!-- (internal preview) or window.openAutoSegmentIntake() behind the        -->
+<!-- AUTO_SEGMENT_ENABLED flag. See handoff for the backend endpoint gap.   -->
+<!-- ===================================================================== -->
+<style id="asf-styles">
+#asf-overlay{
+  --asf-font-ui:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --asf-font-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --asf-bg:#0f1216;--asf-bg-grad:#12161c;--asf-panel:#171c23;--asf-panel-2:#1e242d;--asf-panel-3:#242c37;
+  --asf-text:#e9edf2;--asf-muted:#98a3b0;--asf-faint:#6a7480;--asf-line:#2a323d;--asf-line-soft:#222932;
+  --asf-p1:#ff7a45;--asf-p2:#3b9eff;--asf-ok:#2dd4a7;--asf-warn:#f5b640;--asf-court:#d8543e;
+  --asf-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 8px 30px rgba(0,0,0,.35);--asf-radius:14px;
+  position:fixed;inset:0;z-index:99999;overflow:auto;font-family:var(--asf-font-ui);
+  color:var(--asf-text);line-height:1.5;-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1100px 560px at 80% -10%,color-mix(in srgb,var(--asf-p2) 9%,transparent),transparent 60%),
+    radial-gradient(820px 460px at 6% 0%,color-mix(in srgb,var(--asf-p1) 7%,transparent),transparent 55%),
+    linear-gradient(180deg,var(--asf-bg-grad),var(--asf-bg));
+}
+#asf-overlay[hidden]{display:none}
+@media (prefers-color-scheme:light){#asf-overlay{
+  --asf-bg:#eceff3;--asf-bg-grad:#e6eaef;--asf-panel:#fff;--asf-panel-2:#f4f6f9;--asf-panel-3:#eef1f5;
+  --asf-text:#182029;--asf-muted:#586574;--asf-faint:#8a94a1;--asf-line:#dde3ea;--asf-line-soft:#e7ecf1;
+  --asf-p1:#ee5a22;--asf-p2:#1f74d6;--asf-ok:#0fa47c;--asf-warn:#c67d12;--asf-court:#c14631;
+  --asf-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 26px rgba(16,24,40,.08);
+}}
+#asf-overlay *{box-sizing:border-box}
+#asf-overlay .asf-wrap{max-width:860px;margin:0 auto;padding:26px 22px 56px}
+#asf-overlay .asf-top{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-bottom:22px}
+#asf-overlay .asf-brand{display:flex;align-items:center;gap:11px;margin-right:auto}
+#asf-overlay .asf-logo{width:34px;height:34px;border-radius:9px;position:relative;background:linear-gradient(150deg,var(--asf-p1),var(--asf-p2));box-shadow:0 4px 14px color-mix(in srgb,var(--asf-p2) 30%,transparent)}
+#asf-overlay .asf-logo::after{content:"";position:absolute;inset:9px;border-radius:3px;border:2px solid rgba(255,255,255,.85)}
+#asf-overlay .asf-brand b{font-size:15px}
+#asf-overlay .asf-brand span{display:block;font:500 11px/1.2 var(--asf-font-mono);color:var(--asf-faint);letter-spacing:.4px;text-transform:uppercase}
+#asf-overlay .asf-badge{font:600 10.5px/1 var(--asf-font-mono);letter-spacing:.8px;text-transform:uppercase;color:var(--asf-warn);background:color-mix(in srgb,var(--asf-warn) 14%,transparent);border:1px solid color-mix(in srgb,var(--asf-warn) 40%,transparent);padding:5px 8px;border-radius:6px}
+#asf-overlay .asf-close{font:600 12px var(--asf-font-ui);color:var(--asf-muted);cursor:pointer;background:var(--asf-panel);border:1px solid var(--asf-line);border-radius:8px;padding:7px 11px;display:inline-flex;align-items:center;gap:7px}
+#asf-overlay .asf-close:hover{color:var(--asf-text);border-color:var(--asf-faint)}
+#asf-overlay .asf-stepper{display:flex;align-items:center;background:var(--asf-panel);border:1px solid var(--asf-line);border-radius:12px;padding:10px 14px;margin-bottom:22px;box-shadow:var(--asf-shadow)}
+#asf-overlay .asf-step{display:flex;align-items:center;gap:9px;color:var(--asf-faint);font-size:13px;font-weight:500;background:none;border:0;cursor:default;padding:2px 3px;font-family:inherit}
+#asf-overlay .asf-step.clickable{cursor:pointer}
+#asf-overlay .asf-step.clickable:hover{color:var(--asf-muted)}
+#asf-overlay .asf-step .asf-dot{width:23px;height:23px;border-radius:50%;display:grid;place-items:center;font:600 11px var(--asf-font-mono);border:1.5px solid var(--asf-line);color:var(--asf-faint);background:var(--asf-panel-2)}
+#asf-overlay .asf-step.done{color:var(--asf-muted)}
+#asf-overlay .asf-step.done .asf-dot{background:var(--asf-ok);border-color:var(--asf-ok);color:#03130e}
+#asf-overlay .asf-step.active{color:var(--asf-text)}
+#asf-overlay .asf-step.active .asf-dot{border-color:var(--asf-p2);color:var(--asf-p2);background:color-mix(in srgb,var(--asf-p2) 14%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--asf-p2) 14%,transparent)}
+#asf-overlay .asf-step-sep{flex:1;height:1.5px;background:var(--asf-line);margin:0 9px;border-radius:2px}
+#asf-overlay .asf-step-sep.done{background:var(--asf-ok)}
+#asf-overlay .asf-screen{display:none}
+#asf-overlay .asf-screen.active{display:block}
+#asf-overlay .asf-card{background:var(--asf-panel);border:1px solid var(--asf-line);border-radius:var(--asf-radius);box-shadow:var(--asf-shadow)}
+#asf-overlay h1{font-size:22px;margin:0 0 6px;letter-spacing:-.3px}
+#asf-overlay .asf-sub{color:var(--asf-muted);font-size:14.5px;margin:0 0 20px;max-width:62ch}
+#asf-overlay .asf-frame{position:relative;background:#0b0e12;border-radius:12px;overflow:hidden;border:1px solid var(--asf-line-soft);aspect-ratio:16/9}
+#asf-overlay .asf-frame svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+#asf-overlay .asf-ftag{position:absolute;left:9px;top:9px;font:600 10px var(--asf-font-mono);letter-spacing:.4px;color:#cfe;background:rgba(6,10,14,.62);border:1px solid rgba(255,255,255,.14);padding:3px 7px;border-radius:5px;z-index:4}
+#asf-overlay .asf-ftag.r{left:auto;right:9px}
+#asf-overlay .asf-drop{padding:34px 24px;text-align:center;border:1.5px dashed var(--asf-line);border-radius:12px;background:var(--asf-panel-2);transition:border-color .15s;cursor:pointer}
+#asf-overlay .asf-drop:hover{border-color:var(--asf-faint)}
+#asf-overlay .asf-drop .asf-ic{width:46px;height:46px;margin:0 auto 12px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--asf-p2) 16%,transparent);color:var(--asf-p2);font-size:22px}
+#asf-overlay .asf-drop h3{margin:0 0 4px;font-size:16px}
+#asf-overlay .asf-drop p{margin:0;color:var(--asf-muted);font-size:13px}
+#asf-overlay .asf-uploaded{display:none;padding:16px}
+#asf-overlay .asf-uploaded.show{display:block}
+#asf-overlay .asf-filerow{display:flex;align-items:center;gap:13px}
+#asf-overlay .asf-thumb{width:104px;height:59px;border-radius:9px;overflow:hidden;flex:0 0 auto;position:relative;border:1px solid var(--asf-line-soft)}
+#asf-overlay .asf-thumb svg{position:absolute;inset:0;width:100%;height:100%}
+#asf-overlay .asf-fmeta{flex:1;min-width:0}
+#asf-overlay .asf-fmeta b{font-size:14.5px}
+#asf-overlay .asf-fmeta .asf-m{font:500 12px var(--asf-font-mono);color:var(--asf-muted);margin-top:2px}
+#asf-overlay .asf-scanline{margin-top:14px;display:flex;align-items:center;gap:9px;font-size:13px;color:var(--asf-muted)}
+#asf-overlay .asf-spin{width:15px;height:15px;border-radius:50%;border:2px solid var(--asf-line);border-top-color:var(--asf-p2);animation:asf-spin .8s linear infinite}
+@keyframes asf-spin{to{transform:rotate(360deg)}}
+#asf-overlay .asf-scanline.done .asf-spin{display:none}
+#asf-overlay .asf-scanline.done{color:var(--asf-ok)}
+#asf-overlay .asf-chk{width:16px;height:16px;border-radius:50%;background:var(--asf-ok);color:#03130e;display:none;place-items:center;font:700 10px var(--asf-font-mono)}
+#asf-overlay .asf-scanline.done .asf-chk{display:grid}
+#asf-overlay .asf-progbar{height:6px;border-radius:4px;background:var(--asf-panel-3);overflow:hidden;margin-top:12px}
+#asf-overlay .asf-progbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--asf-p1),var(--asf-p2));border-radius:4px;transition:width .2s linear}
+#asf-overlay .asf-namegrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+#asf-overlay .asf-namecard{background:var(--asf-panel-2);border:1px solid var(--asf-line);border-radius:12px;padding:15px}
+#asf-overlay .asf-namecard .asf-lab{font:600 11px var(--asf-font-mono);letter-spacing:.5px;text-transform:uppercase;display:flex;align-items:center;gap:7px}
+#asf-overlay .asf-namecard.p1 .asf-lab{color:var(--asf-p1)}
+#asf-overlay .asf-namecard.p2 .asf-lab{color:var(--asf-p2)}
+#asf-overlay .asf-namecard .asf-lab i{width:11px;height:11px;border-radius:3px}
+#asf-overlay .asf-namecard input{margin-top:11px;width:100%;font:500 15px var(--asf-font-ui);color:var(--asf-text);background:var(--asf-panel);border:1px solid var(--asf-line);border-radius:9px;padding:10px 12px}
+#asf-overlay .asf-namecard input:focus{outline:none;border-color:var(--asf-p2);box-shadow:0 0 0 3px color-mix(in srgb,var(--asf-p2) 18%,transparent)}
+#asf-overlay .asf-assign{display:grid;grid-template-columns:1fr;gap:14px;margin-top:16px}
+#asf-overlay .asf-assignrow{display:flex;align-items:center;gap:13px;background:var(--asf-panel-2);border:1px solid var(--asf-line);border-radius:12px;padding:12px 13px}
+#asf-overlay .asf-boxchip{width:44px;height:52px;border-radius:8px;flex:0 0 auto;position:relative;overflow:hidden;background:#0b0e12;border:1px solid var(--asf-line-soft)}
+#asf-overlay .asf-boxchip svg{position:absolute;inset:0;width:100%;height:100%}
+#asf-overlay .asf-who{flex:1;min-width:0}
+#asf-overlay .asf-who .asf-k{font:600 10.5px var(--asf-font-mono);letter-spacing:.4px;text-transform:uppercase;color:var(--asf-faint)}
+#asf-overlay .asf-assignrow.p1 .asf-who .asf-k{color:var(--asf-p1)}
+#asf-overlay .asf-assignrow.p2 .asf-who .asf-k{color:var(--asf-p2)}
+#asf-overlay .asf-who .asf-nm{font-size:17px;font-weight:600;margin-top:2px;letter-spacing:-.2px}
+#asf-overlay .asf-swap{display:flex;justify-content:center;margin:2px 0}
+#asf-overlay .asf-swapbtn{font:600 12.5px var(--asf-font-ui);color:var(--asf-text);background:var(--asf-panel);border:1px solid var(--asf-line);border-radius:9px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+#asf-overlay .asf-swapbtn:hover{border-color:var(--asf-faint)}
+#asf-overlay .asf-pv-bar{display:flex;align-items:center;gap:12px;margin-top:13px;background:var(--asf-panel-2);border:1px solid var(--asf-line);border-radius:11px;padding:11px 14px}
+#asf-overlay .asf-play{width:34px;height:34px;border-radius:50%;flex:0 0 auto;background:var(--asf-p2);color:#fff;border:0;display:grid;place-items:center;cursor:pointer;font-size:13px}
+#asf-overlay .asf-pv-status{flex:1;min-width:0}
+#asf-overlay .asf-pv-status .asf-t{display:flex;justify-content:space-between;font:600 12.5px var(--asf-font-mono);font-variant-numeric:tabular-nums}
+#asf-overlay .asf-pv-status .asf-t .asf-live{color:var(--asf-ok);display:inline-flex;align-items:center;gap:6px}
+#asf-overlay .asf-pv-status .asf-t .asf-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--asf-ok);animation:asf-pulse 1.2s ease-in-out infinite}
+@keyframes asf-pulse{50%{opacity:.35}}
+#asf-overlay .asf-pv-track{height:8px;border-radius:5px;background:var(--asf-panel-3);margin-top:9px;position:relative;overflow:hidden}
+#asf-overlay .asf-pv-games{position:absolute;inset:0;display:flex;gap:2px}
+#asf-overlay .asf-pv-games .asf-g{height:100%;border-radius:3px;background:color-mix(in srgb,var(--asf-line) 75%,transparent);transition:background .3s}
+#asf-overlay .asf-pv-games .asf-g.done{background:var(--asf-ok)}
+#asf-overlay .asf-pv-games .asf-g.cur{background:linear-gradient(90deg,var(--asf-ok),color-mix(in srgb,var(--asf-ok) 30%,var(--asf-panel-3)))}
+#asf-overlay .asf-pv-legend{display:flex;gap:16px;margin-top:12px;font:500 12px var(--asf-font-mono);color:var(--asf-muted)}
+#asf-overlay .asf-pv-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+#asf-overlay .asf-done-note{display:none;margin-top:12px;align-items:center;gap:9px;color:var(--asf-ok);font-weight:600;font-size:14px}
+#asf-overlay .asf-done-note.show{display:flex}
+#asf-overlay .asf-nav{display:flex;align-items:center;gap:12px;margin-top:22px}
+#asf-overlay .asf-nav .asf-sp{flex:1}
+#asf-overlay .asf-btn{font:600 13px var(--asf-font-ui);cursor:pointer;border-radius:10px;padding:11px 18px;border:1px solid var(--asf-line);background:var(--asf-panel);color:var(--asf-text)}
+#asf-overlay .asf-btn:hover{border-color:var(--asf-faint)}
+#asf-overlay .asf-btn:disabled{opacity:.45;cursor:not-allowed}
+#asf-overlay .asf-btn.primary{background:linear-gradient(135deg,var(--asf-p1),var(--asf-p2));color:#fff;border:0}
+#asf-overlay .asf-hint{font-size:12.5px;color:var(--asf-faint);margin-top:14px}
+#asf-overlay .asf-note{margin-top:14px;font-size:12.5px;color:var(--asf-warn);background:color-mix(in srgb,var(--asf-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--asf-warn) 30%,transparent);border-radius:9px;padding:9px 12px}
+@media (max-width:560px){#asf-overlay .asf-namegrid{grid-template-columns:1fr}#asf-overlay .asf-step .asf-lbl{display:none}}
+@media (prefers-reduced-motion:reduce){#asf-overlay *{animation:none!important;transition:none!important}}
+</style>
+
+<div id="asf-overlay" hidden aria-modal="true" role="dialog" aria-label="Match intake" tabindex="-1">
+  <div class="asf-wrap">
+    <header class="asf-top">
+      <div class="asf-brand"><div class="asf-logo"></div><div><b>BoastIQ</b><span>Match intake</span></div></div>
+      <span class="asf-badge" id="asf-badge">Preview</span>
+      <button class="asf-close" id="asf-close" type="button">✕ Close</button>
+    </header>
+    <nav class="asf-stepper" id="asf-stepper" aria-label="Progress">
+      <button class="asf-step" data-s="1" type="button"><span class="asf-dot">1</span><span class="asf-lbl">Upload</span></button>
+      <span class="asf-step-sep" data-sep="1"></span>
+      <button class="asf-step" data-s="2" type="button"><span class="asf-dot">2</span><span class="asf-lbl">Name players</span></button>
+      <span class="asf-step-sep" data-sep="2"></span>
+      <button class="asf-step" data-s="3" type="button"><span class="asf-dot">3</span><span class="asf-lbl">Match to boxes</span></button>
+      <span class="asf-step-sep" data-sep="3"></span>
+      <button class="asf-step" data-s="4" type="button"><span class="asf-dot">4</span><span class="asf-lbl">Watch tracking</span></button>
+    </nav>
+
+    <section class="asf-screen" data-screen="1" aria-label="Upload">
+      <h1>Upload your match.</h1>
+      <p class="asf-sub">Drop in the full video — warm-up, all games, breaks and all. We’ll find the players and the games for you.</p>
+      <div class="asf-card" style="padding:16px">
+        <input type="file" id="asf-file" accept="video/*" style="display:none">
+        <div class="asf-drop" id="asf-drop" role="button" tabindex="0" aria-label="Choose a video to upload">
+          <div class="asf-ic">↑</div><h3>Drop a video, or choose a file</h3><p>MP4 or MOV · a whole match is fine</p>
+          <div class="asf-progbar" id="asf-upprog" style="display:none;margin-top:16px"><i></i></div>
+        </div>
+        <div class="asf-uploaded" id="asf-uploaded">
+          <div class="asf-filerow">
+            <div class="asf-thumb" id="asf-upThumb"></div>
+            <div class="asf-fmeta"><b id="asf-fname">your_match.mp4</b><div class="asf-m" id="asf-fsize">whole match</div></div>
+          </div>
+          <div class="asf-scanline" id="asf-scanline"><span class="asf-spin"></span><span class="asf-chk">✓</span><span id="asf-scanText">Scanning for players on court…</span></div>
+        </div>
+      </div>
+      <div class="asf-note" id="asf-simnote" hidden>Preview — the auto-segment scanner isn’t deployed yet, so detection here is simulated. Wiring in the handoff.</div>
+    </section>
+
+    <section class="asf-screen" data-screen="2" aria-label="Name players">
+      <h1>Who’s playing?</h1>
+      <p class="asf-sub">We found two players on court. Enter their names — you’ll match each name to a player in the next step.</p>
+      <div class="asf-namegrid">
+        <div class="asf-namecard p1"><span class="asf-lab"><i style="background:var(--asf-p1)"></i>Player 1</span>
+          <input id="asf-name1" type="text" placeholder="e.g. Zane" autocomplete="off"></div>
+        <div class="asf-namecard p2"><span class="asf-lab"><i style="background:var(--asf-p2)"></i>Player 2</span>
+          <input id="asf-name2" type="text" placeholder="e.g. Patel" autocomplete="off"></div>
+      </div>
+      <p class="asf-hint">Names carry through every game in the match.</p>
+    </section>
+
+    <section class="asf-screen" data-screen="3" aria-label="Match names to boxes">
+      <h1>Which player is which?</h1>
+      <p class="asf-sub">Here’s the frame where tracking starts. We picked it because both players are clearly apart and fully in view. Match your names to the two boxes.</p>
+      <div class="asf-frame" id="asf-whoFrame"><span class="asf-ftag">SEED FRAME · both players apart ✓</span></div>
+      <div class="asf-assign">
+        <div class="asf-assignrow p1"><div class="asf-boxchip" id="asf-chipCoral"></div>
+          <div class="asf-who"><div class="asf-k"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--asf-p1);margin-right:6px"></span>Coral box</div><div class="asf-nm" id="asf-coralName">Player 1</div></div></div>
+        <div class="asf-swap"><button class="asf-swapbtn" id="asf-swap" type="button">⇄ Swap — that’s not right</button></div>
+        <div class="asf-assignrow p2"><div class="asf-boxchip" id="asf-chipAzure"></div>
+          <div class="asf-who"><div class="asf-k"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--asf-p2);margin-right:6px"></span>Azure box</div><div class="asf-nm" id="asf-azureName">Player 2</div></div></div>
+      </div>
+    </section>
+
+    <section class="asf-screen" data-screen="4" aria-label="Watch tracking">
+      <h1>Tracking your match.</h1>
+      <p class="asf-sub">Sit back and watch — we’re following both players through every game. You can keep this tab open or come back later.</p>
+      <div class="asf-frame" id="asf-trackFrame"><span class="asf-ftag">LIVE TRACKING</span><span class="asf-ftag r" id="asf-trackClock">00:00</span></div>
+      <div class="asf-pv-bar">
+        <button class="asf-play" id="asf-playBtn" type="button" aria-label="Pause">❚❚</button>
+        <div class="asf-pv-status">
+          <div class="asf-t"><span id="asf-trackLabel">Game 1 of 4</span><span class="asf-live" id="asf-trackPct">0%</span></div>
+          <div class="asf-pv-track"><div class="asf-pv-games" id="asf-pvGames"></div></div>
+        </div>
+      </div>
+      <div class="asf-pv-legend">
+        <span id="asf-lg1"><i style="background:var(--asf-p1)"></i>Player 1</span>
+        <span id="asf-lg2"><i style="background:var(--asf-p2)"></i>Player 2</span>
+        <span><i style="background:var(--asf-ok)"></i>Game tracked</span>
+      </div>
+      <div class="asf-done-note" id="asf-doneNote"><span style="width:18px;height:18px;border-radius:50%;background:var(--asf-ok);color:#03130e;display:grid;place-items:center;font:700 11px var(--asf-font-mono)">✓</span>All games tracked — your stats are ready.</div>
+    </section>
+
+    <div class="asf-nav">
+      <button class="asf-btn" id="asf-backBtn" type="button">← Back</button>
+      <div class="asf-sp"></div>
+      <button class="asf-btn primary" id="asf-nextBtn" type="button">Continue</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ===== FS-0004 Auto-segment intake flow (GATED PREVIEW) =====
+  // Ships HIDDEN. Opens only when ?autoseg is present (internal preview) or
+  // window.openAutoSegmentIntake() is called. AUTO_SEGMENT_ENABLED is the
+  // production gate the operator flips once the scan endpoint is deployed.
+  //
+  // Backend reality (see handoff): the scanner (auto_segment_seed) runs INSIDE
+  // the existing tracking job, gated by AUTO_SEGMENT_ENABLED, and is NOT yet
+  // deployed. There is NO interactive scan/seed endpoint for the "match names
+  // to boxes" step. This flow calls the INTENDED contract
+  //   GET ${API}/api/auto-segment/{videoKey}
+  //     -> { status:'ok', games:[{game_index,start_sec,end_sec}],
+  //          seed_frame_url, players:[{player,box:[x,y,w,h]}] }
+  // and, until that exists, honestly falls back to a SIMULATED detection
+  // (badge stays "Preview", a warning note is shown). Step 4 progress polls the
+  // REAL, deployed GET ${API}/api/tracking-status/{videoKey} when a real
+  // videoKey is present.
+  const AUTO_SEGMENT_ENABLED = false;  // <-- GATE: operator flips true once the scan endpoint ships
+  const API_BASE = (typeof API !== 'undefined' && API) ? API : 'https://boast-iq-dev--boastiq-tracker-web.modal.run';
+
+  const overlay = document.getElementById('asf-overlay');
+  if (!overlay) return;
+  const $ = id => document.getElementById(id);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let step = 1, uploadDone = false, swapped = false, trackTimer = null, trackVal = 0, pollTimer = null;
+  let realVideoKey = null;      // set when wired to a real upload; null in preview
+  let simulated = true;         // true until a real scan endpoint answers
+  let games = [ [0,648],[756,1570],[1700,2225],[2380,3073] ], DUR = 3073;  // sim fallback spans
+  const names = { 1:'', 2:'' };
+  const nm = i => (names[i]||'').trim() || ('Player '+i);
+  // Small hooks for automated verification / external entry points.
+  window.__asfState = { get uploadDone(){ return uploadDone; }, get step(){ return step; }, get simulated(){ return simulated; } };
+  window.__asfStartUpload = () => startUpload(null);
+
+  /* ---- reusable camera-view court (from approved mockup) ---- */
+  function court(o){
+    o = o || {}; const p1 = o.p1||[30,60], p2 = o.p2||[66,50], labels = o.labels||null, trails = !!o.trails, mini = !!o.mini;
+    const floor='<polygon points="18,88 82,88 68,42 32,42" fill="#141a12" stroke="#2c3a26" stroke-width="1"/>'
+      +'<line x1="32" y1="42" x2="68" y2="42" stroke="var(--asf-court)" stroke-width="1.1" opacity=".7"/>'
+      +'<line x1="24" y1="66" x2="76" y2="66" stroke="var(--asf-court)" stroke-width="1" opacity=".5"/>'
+      +'<line x1="50" y1="42" x2="50" y2="88" stroke="var(--asf-court)" stroke-width=".8" opacity=".35"/>';
+    const wall='<rect x="30" y="18" width="40" height="24" fill="#10161b" stroke="#28323b"/>'
+      +'<line x1="30" y1="35" x2="70" y2="35" stroke="var(--asf-court)" stroke-width="1" opacity=".6"/>';
+    const fig=(x,y,c,label,trail)=>{
+      const bw=mini?9:8,bh=18;
+      const tr=trail?`<path d="M${x-9},${y+3} Q ${x-4},${y-2} ${x},${y}" fill="none" stroke="${c}" stroke-width="1.4" opacity=".4" stroke-linecap="round"/>`:'';
+      const lb=label?`<g><rect x="${x-bw/2-1}" y="${y-bh-9}" width="${Math.max(bw+2,label.length*3.4+6)}" height="7.5" rx="2" fill="${c}"/>`
+        +`<text x="${x-bw/2-1+Math.max(bw+2,label.length*3.4+6)/2}" y="${y-bh-3.4}" text-anchor="middle" font-family="var(--asf-font-mono)" font-size="5" fill="#0b0e12" font-weight="700">${label}</text></g>`:'';
+      return `${tr}<ellipse cx="${x}" cy="${y+1}" rx="${bw*0.7}" ry="2" fill="#000" opacity=".28"/>`
+        +`<rect x="${x-bw/2}" y="${y-bh}" width="${bw}" height="${bh}" rx="2.5" fill="none" stroke="${c}" stroke-width="1.7"/>`
+        +`<circle cx="${x}" cy="${y-bh+3.4}" r="2.1" fill="${c}"/>`
+        +`<rect x="${x-bw/2+1.4}" y="${y-bh+6.4}" width="${bw-2.8}" height="${bh-9}" rx="1.6" fill="${c}" opacity=".22"/>${lb}`;
+    };
+    const dist=(!mini)?`<line x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" stroke="var(--asf-ok)" stroke-width="1" stroke-dasharray="2.5 2.5" opacity=".75"/>`:'';
+    return `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Court view with player boxes">`
+      +`<rect width="100" height="100" fill="#0b0e12"/>${wall}${floor}${dist}`
+      +`${fig(p1[0],p1[1],"var(--asf-p1)",labels?labels[0]:null,trails)}`
+      +`${fig(p2[0],p2[1],"var(--asf-p2)",labels?labels[1]:null,trails)}</svg>`;
+  }
+  function boxCrop(c){ return `<svg viewBox="0 0 44 52" preserveAspectRatio="xMidYMid slice"><rect width="44" height="52" fill="#0b0e12"/>`
+    +`<rect x="13" y="7" width="18" height="38" rx="3" fill="none" stroke="${c}" stroke-width="2.2"/>`
+    +`<circle cx="22" cy="15" r="4.4" fill="${c}"/><rect x="16" y="22" width="12" height="20" rx="2.5" fill="${c}" opacity=".24"/></svg>`; }
+
+  /* ---- open / close ---- */
+  function open(){ overlay.hidden = false; document.body.style.overflow = 'hidden'; step = 1; uploadDone = false; show(); overlay.focus(); }
+  function close(){ overlay.hidden = true; document.body.style.overflow = ''; stopTracking(); if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+  window.openAutoSegmentIntake = open;
+  $('asf-close').addEventListener('click', close);
+  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+
+  /* ---- step nav ---- */
+  function maxReachable(){ return uploadDone ? 4 : 1; }
+  function renderStepper(){
+    overlay.querySelectorAll('.asf-step').forEach(b => {
+      const s = +b.dataset.s;
+      b.classList.toggle('active', s === step);
+      b.classList.toggle('done', s < step);
+      const reachable = s <= maxReachable();
+      b.classList.toggle('clickable', reachable);
+      b.disabled = !reachable;
+    });
+    overlay.querySelectorAll('.asf-step-sep').forEach(x => x.classList.toggle('done', +x.dataset.sep < step));
+  }
+  function go(s){ if (s < 1 || s > 4) return; if (s > 1 && !uploadDone) return; step = s; show(); }
+  function next(){ if (step === 1 && !uploadDone){ startUpload(null); return; } if (step < 4) go(step + 1); }
+  function show(){
+    overlay.querySelectorAll('.asf-screen').forEach(sc => sc.classList.toggle('active', +sc.dataset.screen === step));
+    renderStepper();
+    const nextBtn = $('asf-nextBtn'), back = $('asf-backBtn');
+    back.style.visibility = step === 1 ? 'hidden' : 'visible';
+    nextBtn.textContent = step === 1 ? 'Continue' : step === 2 ? 'Match players →' : step === 3 ? 'Start tracking →' : 'Finish';
+    nextBtn.disabled = (step === 1 && !uploadDone);
+    if (step === 3) renderWho();
+    if (step === 4) startTracking(); else stopTracking();
+  }
+
+  /* ---- step 1: upload + detect ----
+     Real users: pick a file → (real upload seam) → GET /api/auto-segment.
+     Preview: no file needed → simulated detection, clearly labelled. */
+  $('asf-drop').addEventListener('click', () => { if (AUTO_SEGMENT_ENABLED && !uploadDone) $('asf-file').click(); else startUpload(null); });
+  $('asf-drop').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); $('asf-drop').click(); } });
+  $('asf-file').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) startUpload(f); });
+
+  function humanSize(bytes){ if (!bytes) return 'whole match'; const mb = bytes/1048576; return (mb >= 1024 ? (mb/1024).toFixed(1)+' GB' : Math.round(mb)+' MB'); }
+
+  function startUpload(file){
+    if (uploadDone) return;
+    $('asf-upThumb').innerHTML = court({ labels: null });
+    if (file){ $('asf-fname').textContent = file.name; $('asf-fsize').textContent = humanSize(file.size); }
+    const prog = $('asf-upprog'); prog.style.display = 'block';
+    const bar = prog.querySelector('i');
+    // SEAM: real upload goes here — reuse the app's existing authenticated
+    // upload (uploadVideo / signed-PUT flow) to push `file` to GCS and obtain a
+    // real videoKey, then set realVideoKey and simulated=false. Deferred: the
+    // preview path does not upload. See handoff.
+    let p = 0;
+    const finishUp = () => {
+      $('asf-drop').style.display = 'none';
+      $('asf-uploaded').classList.add('show');
+      detectPlayers().then(() => {
+        const line = $('asf-scanline');
+        line.classList.add('done');
+        const gc = games.length;
+        $('asf-scanText').textContent = `Found 2 players on court · ${gc} game${gc===1?'':'s'} detected` + (simulated ? ' (simulated)' : '');
+        $('asf-simnote').hidden = !simulated;
+        uploadDone = true; $('asf-nextBtn').disabled = false; renderStepper();
+      });
+    };
+    if (reduce){ bar.style.width = '100%'; finishUp(); return; }
+    const t = setInterval(() => { p += Math.random()*22 + 8; if (p >= 100){ p = 100; clearInterval(t); bar.style.width = '100%'; finishUp(); } else bar.style.width = p + '%'; }, 160);
+  }
+
+  // Attempt the intended real scan endpoint; fall back to the simulated spans.
+  async function detectPlayers(){
+    if (realVideoKey){
+      try {
+        const r = await fetch(`${API_BASE}/api/auto-segment/${encodeURIComponent(realVideoKey)}`);
+        if (r.ok){
+          const d = await r.json();
+          if (d && d.status === 'ok' && Array.isArray(d.games) && d.games.length){
+            games = d.games.map(g => [Math.round(g.start_sec||0), Math.round(g.end_sec||0)]);
+            DUR = games[games.length-1][1] || DUR;
+            simulated = false;
+            return d;
+          }
+        }
+      } catch(_){ /* endpoint not deployed → simulate */ }
+    }
+    simulated = true;
+    return null;
+  }
+
+  /* ---- step 3: assign names to boxes ---- */
+  const coralIdx = () => swapped ? 2 : 1;
+  const azureIdx = () => swapped ? 1 : 2;
+  function renderWho(){
+    $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
+      court({ p1:[30,62], p2:[68,48], labels:[nm(coralIdx()), nm(azureIdx())] });
+    $('asf-chipCoral').innerHTML = boxCrop('var(--asf-p1)');
+    $('asf-chipAzure').innerHTML = boxCrop('var(--asf-p2)');
+    $('asf-coralName').textContent = nm(coralIdx());
+    $('asf-azureName').textContent = nm(azureIdx());
+  }
+  $('asf-swap').addEventListener('click', () => { swapped = !swapped; renderWho(); });
+  $('asf-name1').addEventListener('input', e => { names[1] = e.target.value; });
+  $('asf-name2').addEventListener('input', e => { names[2] = e.target.value; });
+
+  /* ---- step 4: watch tracking ----
+     Real (realVideoKey set): poll the deployed /api/tracking-status.
+     Preview: animate the seed-frame court over the detected spans. */
+  function buildGames(){ $('asf-pvGames').innerHTML = games.map(g => `<span class="asf-g" style="flex:0 0 ${((g[1]-g[0])/DUR*100)}%"></span>`).join(''); }
+  function fmt(s){ s = Math.round(s); const m = Math.floor(s/60); return String(m).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
+  function startTracking(){
+    buildGames();
+    const cName = nm(coralIdx()), aName = nm(azureIdx());
+    $('asf-lg1').innerHTML = '<i style="background:var(--asf-p1)"></i>' + cName;
+    $('asf-lg2').innerHTML = '<i style="background:var(--asf-p2)"></i>' + aName;
+    const frame = $('asf-trackFrame');
+    const draw = t => {
+      const ph = t/DUR*Math.PI*6;
+      const p1 = [30 + Math.sin(ph)*14, 60 + Math.cos(ph*1.3)*8];
+      const p2 = [66 + Math.cos(ph*1.1)*12, 50 + Math.sin(ph)*9];
+      frame.innerHTML = '<span class="asf-ftag">LIVE TRACKING</span><span class="asf-ftag r">' + fmt(t) + '</span>' + court({ p1, p2, labels:[cName,aName], trails:true });
+    };
+    // Real progress hook (deployed endpoint). Preview has no realVideoKey.
+    if (realVideoKey && !simulated){ pollRealTracking(draw); return; }
+    if (trackTimer) return;
+    if (reduce){ trackVal = DUR; paintProgress(1); draw(DUR*0.5); $('asf-playBtn').textContent = '▶';
+      $('asf-doneNote').classList.add('show'); $('asf-trackLabel').textContent = `Game ${games.length} of ${games.length}`; $('asf-trackPct').textContent = '100%'; return; }
+    trackVal = 0; $('asf-doneNote').classList.remove('show'); $('asf-playBtn').textContent = '❚❚';
+    trackTimer = setInterval(() => {
+      trackVal += DUR/120; if (trackVal >= DUR){ trackVal = DUR; clearInterval(trackTimer); trackTimer = null; $('asf-doneNote').classList.add('show'); }
+      draw(trackVal); paintProgress(trackVal/DUR);
+    }, 90);
+  }
+  function pollRealTracking(draw){
+    if (pollTimer) return;
+    const tick = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/tracking-status/${encodeURIComponent(realVideoKey)}`);
+        const s = await r.json();
+        const frac = Math.max(0, Math.min(1, Number(s.progress ?? s.percent ?? 0) / (s.percent != null ? 100 : 1)));
+        paintProgress(frac); draw(frac*DUR);
+        if (s.state === 'complete' || frac >= 1){ clearInterval(pollTimer); pollTimer = null; $('asf-doneNote').classList.add('show'); }
+      } catch(_){ /* keep polling */ }
+    };
+    tick(); pollTimer = setInterval(tick, 3000);
+  }
+  function paintProgress(frac){
+    const t = frac*DUR, gs = overlay.querySelectorAll('#asf-pvGames .asf-g');
+    let cur = games.findIndex(g => t >= g[0] && t <= g[1]); let doneCount = games.filter(g => t > g[1]).length;
+    gs.forEach((g,i) => { g.classList.remove('done','cur'); if (t > games[i][1]) g.classList.add('done'); else if (i === cur) g.classList.add('cur'); });
+    const shown = Math.min(games.length, (cur >= 0 ? cur+1 : doneCount + (doneCount < games.length ? 1 : 0)));
+    $('asf-trackLabel').textContent = frac >= 1 ? `Complete · ${games.length} of ${games.length} games` : `Game ${Math.max(1,shown)} of ${games.length}`;
+    $('asf-trackPct').textContent = frac >= 1 ? '100%' : Math.round(frac*100) + '%';
+  }
+  function stopTracking(){ if (trackTimer){ clearInterval(trackTimer); trackTimer = null; } if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+  $('asf-playBtn').addEventListener('click', function(){ if (trackTimer){ stopTracking(); this.textContent = '▶'; } else if (trackVal < DUR){ startTracking(); this.textContent = '❚❚'; } });
+
+  /* ---- wiring ---- */
+  overlay.querySelectorAll('.asf-step').forEach(b => b.addEventListener('click', () => go(+b.dataset.s)));
+  $('asf-backBtn').addEventListener('click', () => go(step - 1));
+  $('asf-nextBtn').addEventListener('click', next);
+
+  // Auto-open for internal preview (?autoseg). Real users never reach this
+  // unless AUTO_SEGMENT_ENABLED is on and an entry point calls open().
+  try { if (new URLSearchParams(location.search).has('autoseg')) open(); } catch(_){}
+})();
+</script>
 </body>
 </html>
