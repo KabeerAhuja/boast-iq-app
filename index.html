@@ -1394,9 +1394,13 @@
   .pv-hl-card.active { border-color: var(--pink); box-shadow: 0 0 0 1px var(--pink), 0 8px 24px rgba(236,72,153,0.25); }
   .pv-hl-card.is-empty, .pv-hl-card:disabled { opacity: 0.4; cursor: default; }
   .pv-hl-card-thumb {
-    height: 92px; position: relative;
+    height: 92px; position: relative; overflow: hidden;
     background: linear-gradient(135deg, rgba(0,240,255,0.10), rgba(236,72,153,0.14));
-    display: flex; align-items: flex-end; padding: 10px;
+  }
+  /* A muted <video> seeked to the point's first frame, filling the thumb. */
+  .pv-hl-card-thumb-vid {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; pointer-events: none; background: transparent; display: block;
   }
   .pv-hl-card.active .pv-hl-card-thumb { background: linear-gradient(135deg, rgba(236,72,153,0.24), rgba(0,240,255,0.14)); }
   .pv-hl-card-tag {
@@ -3639,7 +3643,12 @@
     padding: 9px 18px; font-size: 14px; border-radius: 999px;
   }
   .dash-share-btn svg { margin-top: -1px; }
-  .dash-meta { color: var(--text-dim); font-size: 13px; }
+  .dash-meta { color: var(--text-dim); font-size: 13px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  /* Reel banner lives to the RIGHT of the "Point X of Y" line, same row, right
+     under the video. Same 13px / text-dim format as the rest of .dash-meta. */
+  .dash-meta-reel { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dash-meta-reel:empty { display: none; }
+  .dash-meta-reel strong { color: var(--text); }
   .dash-meta kbd {
     background: var(--bg-elev-2, rgba(255,255,255,0.06));
     border: 1px solid rgba(255,255,255,0.1);
@@ -5046,7 +5055,7 @@
           </div>
         </div>
 
-        <div class="dash-meta">Point <span id="dash-point-cur">–</span> of <span id="dash-point-total">–</span><span class="dash-meta-keys"> · <kbd>←</kbd><kbd>→</kbd> nav · <kbd>space</kbd> play</span></div>
+        <div class="dash-meta"><span class="dash-meta-main">Point <span id="dash-point-cur">–</span> of <span id="dash-point-total">–</span><span class="dash-meta-keys"> · <kbd>←</kbd><kbd>→</kbd> nav · <kbd>space</kbd> play</span></span><span class="dash-meta-reel" id="dash-meta-reel"></span></div>
 
         <div class="dash-panel dash-stats-panel">
           <div class="dash-panel-h">
@@ -11579,6 +11588,12 @@ function showResults(msg) {
     // loaded by loadMatchAggregates (rally cache + movementPerPoint), so until
     // the rally cache has landed we show a loading state rather than empty/wrong
     // lists (the distance cards would otherwise read as "0 points").
+    // Signature of the last-built card set — cards are rebuilt only when the
+    // preset set/counts change, NOT on every reel navigation. Rebuilding on nav
+    // would tear down each card's thumbnail <video> and re-seek the source
+    // (flicker + wasted range fetches).
+    let _hlCardsSig = null;
+
     function renderHighlights() {
       const host = document.getElementById('pv-highlights');
       if (!host) return;
@@ -11594,47 +11609,125 @@ function showResults(msg) {
         host.innerHTML =
           `<div class="pv-highlights-header"><h3>Highlights</h3>${filtersBtn}</div>` +
           `<div class="pv-highlights-loading">Building highlights from movement data…</div>`;
-        wireHighlights();
+        _hlCardsSig = null;
+        wireFiltersBtn();
+        renderReelBanner();
         return;
       }
 
-      const cards = highlightPresets.map(preset => {
-        const count = preset.pointNumbers.length;
-        const isActive = !!(activeHighlight && activeHighlight.key === preset.key);
-        const disabled = count === 0;
-        return `<button class="pv-hl-card${isActive ? ' active' : ''}${disabled ? ' is-empty' : ''}" ` +
-          `data-key="${preset.key}"${disabled ? ' disabled' : ''}>` +
-          `<div class="pv-hl-card-thumb"><span class="pv-hl-card-tag">${escHl(preset.tag)}</span></div>` +
-          `<div class="pv-hl-card-title">${escHl(preset.label)}</div>` +
-          `<div class="pv-hl-card-count">${count} point${count === 1 ? '' : 's'}</div>` +
-          `</button>`;
-      }).join('');
+      const sig = highlightPresets.map(p => `${p.key}:${p.pointNumbers.length}`).join('|');
+      if (!host.querySelector('#pv-hl-scroller') || _hlCardsSig !== sig) {
+        const cards = highlightPresets.map(preset => {
+          const count = preset.pointNumbers.length;
+          const disabled = count === 0;
+          // Thumbnail = the FIRST-PLAYED point of the reel (chronologically
+          // first) — that's the still the user sees when the reel starts.
+          const firstPt = firstReelPoint(preset.pointNumbers);
+          const firstPn = firstPt ? firstPt.point_number : '';
+          return `<button class="pv-hl-card${disabled ? ' is-empty' : ''}" ` +
+            `data-key="${preset.key}"${disabled ? ' disabled' : ''}>` +
+            `<div class="pv-hl-card-thumb" data-pn="${firstPn}"></div>` +
+            `<div class="pv-hl-card-title">${escHl(preset.label)}</div>` +
+            `<div class="pv-hl-card-count">${count} point${count === 1 ? '' : 's'}</div>` +
+            `</button>`;
+        }).join('');
+        host.innerHTML =
+          `<div class="pv-highlights-header"><h3>Highlights</h3>${filtersBtn}</div>` +
+          `<div class="pv-highlights-scroller" id="pv-hl-scroller">${cards}</div>`;
+        _hlCardsSig = sig;
+        wireCardClicks();
+      }
 
-      const banner = activeHighlight
-        ? `<div class="pv-hl-reel-banner">Reel: <strong>${escHl(activeHighlight.label)}</strong> — ` +
-          `point ${reelCursor + 1} of ${reelIndices().length}.` +
-          `<button class="pv-hl-reel-exit" id="pv-hl-reel-exit">↩ Back to all points</button></div>`
-        : '';
-
-      host.innerHTML =
-        `<div class="pv-highlights-header"><h3>Highlights</h3>${filtersBtn}</div>` +
-        `<div class="pv-highlights-scroller">${cards}</div>${banner}`;
-      wireHighlights();
+      wireFiltersBtn();
+      updateActiveCards();
+      renderReelBanner();
+      ensureReelThumbs();
     }
 
-    function wireHighlights() {
+    // The chronologically-first point of a reel (the one that plays first), given
+    // the ranking-ordered pointNumbers. Returns the `points[]` entry or null.
+    function firstReelPoint(pointNumbers) {
+      if (!pointNumbers || !pointNumbers.length) return null;
+      const idx = pointNumbers
+        .map(pn => points.findIndex(p => p.point_number === pn))
+        .filter(i => i >= 0)
+        .sort((a, b) => a - b)[0];
+      return (idx != null && points[idx]) ? points[idx] : null;
+    }
+
+    // Render the reel banner into the dash-meta row (to the RIGHT of "Point X of
+    // Y"), right under the video — instead of at the foot of the highlights strip.
+    function renderReelBanner() {
+      const slot = document.getElementById('dash-meta-reel');
+      if (!slot) return;
+      if (!activeHighlight) { slot.innerHTML = ''; return; }
+      slot.innerHTML =
+        `Reel: <strong>${escHl(activeHighlight.label)}</strong> — ` +
+        `point ${reelCursor + 1} of ${reelIndices().length}.` +
+        `<button class="pv-hl-reel-exit" id="pv-hl-reel-exit">↩ Back to all points</button>`;
+      const exitBtn = document.getElementById('pv-hl-reel-exit');
+      if (exitBtn) exitBtn.onclick = () => { if (typeof exitReel === 'function') exitReel(); };
+    }
+
+    // Fill each reel card's thumbnail with a muted <video> seeked to its first
+    // point's timestamp — a real still from that point. We use a <video> (not a
+    // canvas grab) because the source is cross-origin without CORS: a canvas
+    // readback would taint/throw, but simply DISPLAYING the frame needs no CORS.
+    // Runs once per card element (guarded by data-thumb).
+    function ensureReelThumbs() {
+      if (!videoBlobUrl) return;
+      const host = document.getElementById('pv-highlights');
+      if (!host) return;
+      host.querySelectorAll('.pv-hl-card-thumb[data-pn]').forEach(el => {
+        const pn = el.dataset.pn;
+        if (!pn || el.dataset.thumb) return;
+        const pt = points.find(p => String(p.point_number) === String(pn));
+        if (!pt) return;
+        el.dataset.thumb = '1';
+        const sec = Math.max(0.1, pt.timestamp_sec || 0.1);
+        const v = document.createElement('video');
+        v.className = 'pv-hl-card-thumb-vid';
+        v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = 'metadata';
+        v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+        v.src = `${videoBlobUrl}#t=${sec.toFixed(2)}`;
+        // Seek explicitly once metadata is in — the #t= fragment alone isn't
+        // reliable across browsers for painting the target frame while paused.
+        v.addEventListener('loadedmetadata', () => { try { v.currentTime = sec; } catch (_) {} });
+        v.addEventListener('error', () => { try { v.remove(); } catch (_) {} el.dataset.thumb = ''; });
+        el.appendChild(v);
+      });
+    }
+
+    function wireCardClicks() {
       const host = document.getElementById('pv-highlights');
       if (!host) return;
       host.querySelectorAll('.pv-hl-card').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.onclick = () => {
           const preset = highlightPresets.find(p => p.key === btn.dataset.key);
           if (preset && preset.pointNumbers.length && typeof enterReel === 'function') enterReel(preset);
-        });
+        };
       });
+    }
+
+    // Reflect reel state on the header's Filters/Clear-reel button without
+    // rebuilding the header (which would wipe the cards + their thumbnails).
+    function wireFiltersBtn() {
       const fbtn = document.getElementById('pv-hl-filters');
-      if (fbtn) fbtn.addEventListener('click', () => { if (activeHighlight && typeof exitReel === 'function') exitReel(); });
-      const exitBtn = document.getElementById('pv-hl-reel-exit');
-      if (exitBtn) exitBtn.addEventListener('click', () => { if (typeof exitReel === 'function') exitReel(); });
+      if (!fbtn) return;
+      fbtn.disabled = !activeHighlight;
+      fbtn.title = activeHighlight ? 'Clear the reel and return to all points' : 'Play a preset reel by tapping a card';
+      const lbl = fbtn.querySelector('span:last-child');
+      if (lbl) lbl.textContent = activeHighlight ? 'Clear reel' : 'Filters';
+      fbtn.onclick = () => { if (activeHighlight && typeof exitReel === 'function') exitReel(); };
+    }
+
+    // Toggle the pink active ring on whichever card's reel is playing.
+    function updateActiveCards() {
+      const host = document.getElementById('pv-highlights');
+      if (!host) return;
+      host.querySelectorAll('.pv-hl-card').forEach(btn => {
+        btn.classList.toggle('active', !!(activeHighlight && activeHighlight.key === btn.dataset.key));
+      });
     }
 
     // ---- Reel navigation ---------------------------------------------------
@@ -11689,14 +11782,23 @@ function showResults(msg) {
     // Reel-aware timeupdate reconciler: keeps "current point" inside the reel
     // set and, when a reel point finishes, advances to the NEXT reel point
     // (skipping the out-of-set points in between) rather than the next global
-    // point. A point "ends" at the next GLOBAL point's start — the same
-    // boundary the normal reconciler uses.
+    // point. A point "ends" at its REAL rally cutoff (the v2 detector's
+    // calm-period end, `point_end_timestamp_sec`) — NOT at the next global
+    // point's start. Using the next-point start made the reel play through all
+    // the dead time between rallies before jumping, which reads as "it just
+    // keeps playing". A small tail lets the final shot land. We clamp to (and
+    // fall back to) the next global point's start when the calm end is missing.
     function reconcileReel() {
       const idxs = reelIndices();
       if (!idxs.length) return;
       if (reelCursor > idxs.length - 1) reelCursor = idxs.length - 1;
       const gIdx = idxs[reelCursor];
-      const endBound = (gIdx + 1 < points.length) ? points[gIdx + 1].timestamp_sec - 1 : Infinity;
+      const pt = points[gIdx];
+      const nextGlobalStart = (gIdx + 1 < points.length) ? points[gIdx + 1].timestamp_sec - 1 : Infinity;
+      const calmEnd = pt.point_end_timestamp_sec;
+      const endBound = (calmEnd != null && calmEnd > pt.timestamp_sec)
+        ? Math.min(calmEnd + 0.75, nextGlobalStart)
+        : nextGlobalStart;
       if (pvVideo.currentTime >= endBound) {
         if (reelCursor < idxs.length - 1) playReelAt(reelCursor + 1);
         else pvVideo.pause();   // end of reel — don't fall through into the match
