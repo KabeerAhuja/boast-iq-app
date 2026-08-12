@@ -6843,10 +6843,16 @@ async function openProcessingPreview(key, data) {
     if (videoKey !== k) { stopPhaseCreep(); return; }
     stopPhaseCreep();
     setPhaseProgress(2, 1, "Done!");
-    try {
-      const snap = await getDoc(doc(fbFirestore, "videos", k));
-      openVideo(k, snap.exists() ? snap.data() : data);
-    } catch (_) { openVideo(k, data); }
+    const showDash = async () => {
+      try {
+        const snap = await getDoc(doc(fbFirestore, "videos", k));
+        openVideo(k, snap.exists() ? snap.data() : data);
+      } catch (_) { openVideo(k, data); }
+    };
+    // Analyze-first: name the players (real crops) before opening the dashboard,
+    // even when the user left and came back and reopened the processed video.
+    if (autosegMaybeName(k, showDash)) return;
+    await showDash();
   };
 
   // Authoritative progress from the backend tracking-status file. Works for any
@@ -10015,6 +10021,10 @@ document.getElementById("btn-resume").addEventListener("click", () => { ws.send(
 document.getElementById("btn-skip").addEventListener("click", () => { ws.send(JSON.stringify({ type: "skip" })); document.getElementById("reprompt-section").style.display = "none"; });
 
 function showResults(msg) {
+  // Analyze-first flow: processing just finished — collect the player names now
+  // (who's-who with real crops), THEN show the dashboard. Runs once; the recursive
+  // call after naming skips this because the pending-naming record is marked done.
+  if (autosegMaybeName(videoKey, () => showResults(msg))) return;
   track("Results Viewed", { video_key: videoKey });
   setTimeout(() => {
     showStep("results");
@@ -14122,6 +14132,58 @@ function goToUpload() {
   showStep("upload");
 }
 
+// Honest initial ETA for the analyzing page: tracking is the slow part, roughly
+// ~1.2× the match's real duration on the current GPU, floored to 3 min. Once
+// real progress arrives, the existing elapsed-based overall-eta takes over.
+function autosegEtaMinutes() {
+  const durMin = ((videoMeta && videoMeta.duration_sec) || 0) / 60;
+  return Math.max(3, Math.round(durMin * 1.2) || 3);
+}
+
+// Restyle the reused process view as the "Analyzing your match" page.
+function applyAnalyzingUi(nGames) {
+  const eta = autosegEtaMinutes();
+  const stepEl = document.getElementById("step-process");
+  if (!stepEl) return;
+  const title = stepEl.querySelector(".step-title");
+  const desc = stepEl.querySelector(".step-desc");
+  if (title) title.textContent = "Analyzing your match";
+  if (desc) desc.textContent =
+    `Detecting games and tracking both players${nGames > 1 ? ` across ${nGames} games` : ""}. ` +
+    `This takes about ${eta} minute${eta === 1 ? "" : "s"} — you can leave this page and come back, we’ll keep processing.`;
+  const etaEl = document.getElementById("overall-eta");
+  if (etaEl && !etaEl.textContent) etaEl.textContent = `~${eta} min`;
+}
+
+// Pending "name after processing" data (crops from the scan). Kept in memory and
+// mirrored to localStorage so it survives leave-and-come-back in the same browser.
+function autosegGetNaming(key) {
+  // A multi-game match is keyed on the PARENT; each game opens under parentKey__gN.
+  // Match the pending naming by the exact key, its parent, or the game-key list.
+  const parent = String(key || "").replace(/__g\d+$/, "");
+  const matches = (o) => o && !o.done &&
+    (o.videoKey === key || o.videoKey === parent || (Array.isArray(o.gameKeys) && o.gameKeys.indexOf(key) >= 0));
+  const w = window.__autosegPendingNaming;
+  if (matches(w)) return w;
+  try {
+    const s = localStorage.getItem("autoseg_naming_" + parent) || localStorage.getItem("autoseg_naming_" + key);
+    if (s) { const o = JSON.parse(s); if (matches(o)) { window.__autosegPendingNaming = o; return o; } }
+  } catch (_) {}
+  return null;
+}
+// If naming is pending for `key`, show the who's-who naming step (real crops)
+// FIRST and run `cont` after the user confirms; otherwise run `cont` now.
+// Returns true if it intercepted. This is the "name AFTER processing" hook.
+function autosegMaybeName(key, cont) {
+  const naming = autosegGetNaming(key);
+  if (naming && !naming.done && typeof window.__asfOpenNaming === "function") {
+    naming.done = true;
+    window.__asfOpenNaming(key, naming, cont);
+    return true;
+  }
+  return false;
+}
+
 window.__autosegBridge = {
   // Seam 1: real upload via the app's existing authenticated path (handleFile →
   // create-job → get-upload-url → signed PUT → prepare). handleFile sets videoKey,
@@ -14132,22 +14194,38 @@ window.__autosegBridge = {
     await handleFile(file);
     return uploadPromise ? parentVideoKey : null;
   },
-  // Seam 2: start the app's REAL per-game tracking for the scanned games by
-  // reusing spawnGameJobs() — the exact engine the manual flow uses. We pass the
-  // detected spans as the per-game trims and the confirmed names as playerConfig.
-  // Per-game seed points/trim are refined server-side by the deployed auto-seed
-  // (auto_segment_seed, keyed on __gN) when the backend AUTO_SEGMENT_ENABLED flag
-  // is set; game-1's real seed is used as the client-side placeholder.
-  async startTracking(scan, opts) {
-    opts = opts || {};
+  // Show the app's process view as the "Analyzing your match" page IMMEDIATELY
+  // after upload — before the scan even finishes — so the user is never parked on
+  // a modal spinner. Reuses the process step + phase creep; spawnGameJobs takes
+  // over the same view once tracking starts.
+  beginAnalyzing() {
+    try {
+      resetPhases();
+      startPhaseCreep(0, 0.03, 0.4, "Detecting games & players…");
+      const preview = document.getElementById("preview-video");
+      if (preview && typeof videoBlobUrl !== "undefined" && videoBlobUrl) { preview.src = videoBlobUrl; preview.load(); }
+      showStep("process");
+      if (parentVideoKey) updateVideoStatus(parentVideoKey, "processing");
+      applyAnalyzingUi(0);   // after resetPhases so the ETA/copy isn't cleared
+    } catch (_) {}
+  },
+  analyzingError(msg) {
+    try {
+      stopPhaseCreep();
+      updateOverallProgress(0, "Couldn’t analyze this video — " + (msg || "please re-upload."));
+    } catch (_) {}
+  },
+  // Analyze-first: start the WHOLE pipeline with NO naming. Tracks all detected
+  // games auto-seeded (backend auto_segment_seed, keyed on __gN, when the backend
+  // AUTO_SEGMENT_ENABLED env is ON) using default player_1/player_2 labels; the
+  // real names are collected AFTER processing (see autosegMaybeName). Reuses
+  // spawnGameJobs() — the same per-game engine the manual flow uses.
+  async startAutoPipeline(scan) {
     const gs = (scan && scan.games) || [];
     if (!gs.length) throw new Error("no games detected");
-    const pl = (scan && scan.players) || [];
-    const p1pt = (pl[0] && pl[0].seed_point) || null;
-    const p2pt = (pl[1] && pl[1].seed_point) || null;
     playerConfig = {
-      player_1: { name: opts.name1 || "Player 1", handedness: opts.hand1 || "right" },
-      player_2: { name: opts.name2 || "Player 2", handedness: opts.hand2 || "right" },
+      player_1: { name: "Player 1", handedness: "right" },
+      player_2: { name: "Player 2", handedness: "right" },
     };
     gameSegments = gs.map((g) => ({
       startFrame: g.start_frame | 0,
@@ -14155,12 +14233,55 @@ window.__autosegBridge = {
       startSec: g.start_sec || 0,
       endSec: g.end_sec || 0,
     }));
+    const pl = (scan && scan.players) || [];
+    const p1pt = (pl[0] && pl[0].seed_point) || null;
+    const p2pt = (pl[1] && pl[1].seed_point) || null;
     perGamePlayerPositions = gameSegments.map(() => ({ player1: p1pt, player2: p2pt }));
-    await spawnGameJobs();
-    // Land the user on the app's real view: single-game shows the live process
-    // screen (spawnGameJobs already switched to it); multi-game has no single
-    // view, so surface My Videos where each game shows its own progress.
+
+    // Stash the real crops for the after-processing naming step (mem + localStorage).
+    const naming = {
+      videoKey: parentVideoKey,
+      players: (scan.players || []).map((p) => ({ crop: p.crop, seed_point: p.seed_point })),
+      seed_frame_url: scan.seed_frame_url || null,
+      done: false,
+    };
+    window.__autosegPendingNaming = naming;
+    try { localStorage.setItem("autoseg_naming_" + parentVideoKey, JSON.stringify(naming)); } catch (_) {}
+
+    applyAnalyzingUi(gameSegments.length);
+    await spawnGameJobs();   // starts tracking; single-game shows the (analyzing) process view
+    // Record the per-game keys spawnGameJobs created (single-game: [parentKey];
+    // multi-game: [parentKey__g1 … __gN]) so the after-processing naming step can
+    // apply the names the user enters ONCE across every game of the match.
+    naming.gameKeys = (gameVideoKeys && gameVideoKeys.length) ? gameVideoKeys.slice() : [parentVideoKey];
+    window.__autosegPendingNaming = naming;
+    try { localStorage.setItem("autoseg_naming_" + parentVideoKey, JSON.stringify(naming)); } catch (_) {}
+    // Multi-game has no single processing view — each game processes on My Videos.
     if (gameSegments.length > 1) { try { showStep("videos"); } catch (_) {} }
+  },
+  // Save the names the user assigned AFTER processing. Updates each game doc's
+  // playerConfig (what the dashboard reads — the app's existing post-processing
+  // rename path) so labels show immediately, and mirrors to GCS via
+  // /api/autoseg/confirm (best-effort). `keys` is the game-key list: a single
+  // [parentKey] for one game, or [parentKey__g1 … __gN] to name a whole match at
+  // once. Runs before the dashboard opens.
+  async saveNames(videoKey, names, keys) {
+    const cfg = {
+      player_1: { name: (names && names.name1) || "Player 1", handedness: "right" },
+      player_2: { name: (names && names.name2) || "Player 2", handedness: "right" },
+    };
+    playerConfig = cfg;
+    const targets = (Array.isArray(keys) && keys.length) ? keys : [videoKey];
+    for (const k of targets) {
+      try { await updateDoc(doc(fbFirestore, "videos", k), { playerConfig: cfg }); }
+      catch (e) { console.warn("playerConfig update failed for", k, e); }
+      try {
+        await fetch(`${API}/api/autoseg/confirm`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoKey: k, player_1: cfg.player_1, player_2: cfg.player_2 }),
+        });
+      } catch (_) {}
+    }
   },
 };
 </script>
@@ -14432,11 +14553,23 @@ window.__autosegBridge = {
   let scanData = null;          // full real scan response (players, crops, seed frame)
   let confirmSent = false;      // guard so /api/autoseg/confirm fires once
   let trackingStarted = false;  // set once the app's real tracking has been kicked off
+  // Real full-match scans take several minutes (GPU). The scan is kicked off the
+  // moment the upload completes and runs IN PARALLEL with the Name-players step;
+  // scanState drives the who's-who UI (loading → real / error), never the sim art.
+  let scanPromise = null;       // in-flight real scan (spawn + poll)
+  let scanState = 'idle';       // idle | scanning | done | error
+  let scanError = '';           // human message when scanState === 'error'
+  // Name-AFTER-processing: the who's-who runs once tracking is done, via
+  // window.__asfOpenNaming(). namingMode reuses the step-3 who's-who screen.
+  let namingMode = false;
+  let namingDone = null;        // callback to open the dashboard after names are saved
+  let namingKeys = null;        // game keys to apply the names to (whole match at once)
+  let namingParent = null;      // parent key (for clearing the persisted stash)
   let games = [ [0,648],[756,1570],[1700,2225],[2380,3073] ], DUR = 3073;  // sim fallback spans
   const names = { 1:'', 2:'' };
   const nm = i => (names[i]||'').trim() || ('Player '+i);
   // Small hooks for automated verification / external entry points.
-  window.__asfState = { get uploadDone(){ return uploadDone; }, get step(){ return step; }, get simulated(){ return simulated; }, get realVideoKey(){ return realVideoKey; }, get trackingStarted(){ return trackingStarted; } };
+  window.__asfState = { get uploadDone(){ return uploadDone; }, get step(){ return step; }, get simulated(){ return simulated; }, get realVideoKey(){ return realVideoKey; }, get trackingStarted(){ return trackingStarted; }, get scanState(){ return scanState; }, get namingMode(){ return namingMode; } };
   window.__asfStartUpload = () => startUpload(null);
 
   /* ---- reusable camera-view court (from approved mockup) ---- */
@@ -14490,28 +14623,62 @@ window.__autosegBridge = {
   }
   function go(s){ if (s < 1 || s > 4) return; if (s > 1 && !uploadDone) return; step = s; show(); }
   function next(){
+    // Name-after-processing: the who's-who step is now a naming step reached AFTER
+    // tracking (via window.__asfOpenNaming). Confirming saves names → dashboard.
+    if (namingMode && step === 3){ confirmNaming(); return; }
     if (step === 1 && !uploadDone){ if (AUTO_SEGMENT_ENABLED) $('asf-file').click(); else startUpload(null); return; }
-    // Real run: confirming who's-who starts the app's REAL per-game tracking and
-    // hands off to the app's normal processing view. Preview falls through to the
-    // simulated step-4 animation.
-    if (step === 3 && realVideoKey && !simulated && window.__autosegBridge){ startRealTracking(); return; }
-    if (step < 4) go(step + 1);
+    if (step < 4) go(step + 1);  // preview-only forward nav
   }
 
-  // Seam 2: kick off real tracking via the app bridge (reuses spawnGameJobs),
-  // then close the modal so the user lands on the app's live process / My Videos
-  // view where each game shows real progress.
-  async function startRealTracking(){
-    sendConfirm();  // persist the confirmed names (fire-and-forget)
-    const nextBtn = $('asf-nextBtn');
-    nextBtn.disabled = true; nextBtn.textContent = 'Starting…';
+  // ---- Analyze-first: hand off to the app's "Analyzing your match" page, then
+  // run the scan + start auto-seeded tracking behind it. No naming here. ----
+  function beginAutoAnalyze(){
+    trackingStarted = true;
+    window.__autosegBridge.beginAnalyzing();          // show the analyzing page NOW
+    runScan().then(async d => {
+      scanData = d; scanState = 'done';
+      await window.__autosegBridge.startAutoPipeline(d);  // start tracking (auto-seeded)
+    }).catch(err => {
+      window.__autosegBridge.analyzingError(err && err.message ? err.message : 'detection failed');
+    });
+  }
+
+  // ---- Name & tag AFTER processing (called by the app when tracking completes).
+  // Reuses the step-3 who's-who screen with the REAL crops from the scan. ----
+  window.__asfOpenNaming = function(videoKey, naming, onDone){
+    realVideoKey = videoKey;
+    scanData = { players: (naming && naming.players) || [], seed_frame_url: (naming && naming.seed_frame_url) || null, games: (naming && naming.games) || [] };
+    scanState = 'done'; simulated = false; namingMode = true;
+    // Apply the entered names to EVERY game of the match (multi-game) at once, or
+    // just this key (single game). namingParent is what we clear from localStorage.
+    namingKeys = (naming && Array.isArray(naming.gameKeys) && naming.gameKeys.length) ? naming.gameKeys.slice() : [videoKey];
+    namingParent = (naming && naming.videoKey) || videoKey;
+    namingDone = (typeof onDone === 'function') ? onDone : function(){};
+    overlay.hidden = false; document.body.style.overflow = 'hidden';
+    step = 3; uploadDone = true;
+    const stepper = $('asf-stepper'); if (stepper) stepper.style.display = 'none';
+    const badge = $('asf-badge'); if (badge) badge.style.display = 'none';
+    const sub = overlay.querySelector('[data-screen="3"] .asf-sub');
+    if (sub) sub.textContent = 'Your match is tracked. Tell us who’s who so your stats are labelled — match each name to a player.';
+    show();
+    overlay.focus();
+  };
+
+  async function confirmNaming(){
+    const btn = $('asf-nextBtn'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      await window.__autosegBridge.startTracking(scanData, { name1: nm(coralIdx()), name2: nm(azureIdx()) });
-      trackingStarted = true;
+      // Apply the names to every game key of the match (single game → just its key).
+      const keys = (namingKeys && namingKeys.length) ? namingKeys : [realVideoKey];
+      await window.__autosegBridge.saveNames(realVideoKey, { name1: nm(coralIdx()), name2: nm(azureIdx()) }, keys);
+      try { localStorage.removeItem('autoseg_naming_' + (namingParent || realVideoKey)); } catch(_){}
+      if (window.__autosegPendingNaming) window.__autosegPendingNaming.done = true;
+      const done = namingDone; namingDone = null; namingMode = false; namingKeys = null; namingParent = null;
+      const stepper = $('asf-stepper'); if (stepper) stepper.style.display = '';
       close();
+      if (done) done();
     } catch(err){
-      nextBtn.disabled = false; nextBtn.textContent = 'Start tracking →';
-      alert('Could not start tracking: ' + (err && err.message ? err.message : err));
+      btn.disabled = false; btn.textContent = 'Save & view results';
+      alert('Could not save names: ' + (err && err.message ? err.message : err));
     }
   }
   function show(){
@@ -14519,6 +14686,15 @@ window.__autosegBridge = {
     renderStepper();
     const nextBtn = $('asf-nextBtn'), back = $('asf-backBtn');
     back.style.visibility = step === 1 ? 'hidden' : 'visible';
+    // Name-after mode: step 3 is the naming step; the button saves & opens the dashboard.
+    if (namingMode && step === 3){
+      back.style.visibility = 'hidden';
+      nextBtn.textContent = 'Save & view results';
+      nextBtn.disabled = false;
+      renderWho();
+      stopTracking();
+      return;
+    }
     nextBtn.textContent = step === 1 ? 'Continue' : step === 2 ? 'Match players →' : step === 3 ? 'Start tracking →' : 'Finish';
     nextBtn.disabled = (step === 1 && !uploadDone);
     if (step === 3) renderWho();
@@ -14540,23 +14716,12 @@ window.__autosegBridge = {
     if (file){ $('asf-fname').textContent = file.name; $('asf-fsize').textContent = humanSize(file.size); }
     const prog = $('asf-upprog'); prog.style.display = 'block';
     const bar = prog.querySelector('i');
-    const finishUp = () => {
-      $('asf-drop').style.display = 'none';
-      $('asf-uploaded').classList.add('show');
-      detectPlayers().then(() => {
-        const line = $('asf-scanline');
-        line.classList.add('done');
-        const gc = games.length;
-        $('asf-scanText').textContent = `Found 2 players on court · ${gc} game${gc===1?'':'s'} detected` + (simulated ? ' (simulated)' : '');
-        $('asf-simnote').hidden = !simulated;
-        uploadDone = true; $('asf-nextBtn').disabled = false; renderStepper();
-      });
-    };
 
     // Seam 1: REAL upload. A real file + the app bridge → push the file to GCS
     // via the app's existing authenticated upload (create-job → signed PUT →
-    // prepare), then scan the just-uploaded video. bridge.uploadFile resolves the
-    // real videoKey only after the bytes are in GCS (or null if a gate blocked it).
+    // prepare). bridge.uploadFile resolves the real videoKey only after the bytes
+    // are in GCS (or null if a gate blocked it). The scan then starts immediately
+    // and runs in the background while the user names the players.
     if (file && AUTO_SEGMENT_ENABLED && window.__autosegBridge){
       $('asf-drop').style.display = 'none';
       $('asf-uploaded').classList.add('show');
@@ -14574,8 +14739,11 @@ window.__autosegBridge = {
           return;
         }
         realVideoKey = key;
-        $('asf-scanText').textContent = 'Scanning for players on court…';
-        finishUp();
+        uploadDone = true;
+        // Analyze-first: hand off to the app's "Analyzing your match" page and run
+        // the scan + auto-seeded tracking behind it. Naming happens AFTER processing.
+        beginAutoAnalyze();
+        close();
       } catch(err){
         clearInterval(ut);
         $('asf-scanText').textContent = 'Upload failed — ' + ((err && err.message) ? err.message : 'please try again');
@@ -14583,47 +14751,114 @@ window.__autosegBridge = {
       return;
     }
 
-    // Preview path (no file / flow disabled): simulated progress + detection.
+    // Injected real key (?autoseg=<videoKey>) — a verification/preview hook for an
+    // ALREADY-uploaded video: run the real scan and jump straight to the naming
+    // step with the real crops (does NOT start tracking, so it won't spawn jobs).
+    if (realVideoKey){
+      $('asf-drop').style.display = 'none';
+      $('asf-uploaded').classList.add('show');
+      $('asf-scanText').textContent = 'Analyzing your match…';
+      bar.style.width = '100%';
+      uploadDone = true;
+      runScan().then(d => {
+        scanData = d; scanState = 'done';
+        window.__asfOpenNaming(realVideoKey, { videoKey: realVideoKey, players: d.players, seed_frame_url: d.seed_frame_url, games: d.games }, function(){ /* dashboard would open here in the live flow */ });
+      }).catch(err => {
+        $('asf-scanText').textContent = 'Analysis failed — ' + ((err && err.message) ? err.message : 'please try again');
+      });
+      return;
+    }
+
+    // Preview path (no file, no real key): simulated progress + fake spans. Only
+    // reachable in the internal ?autoseg preview — real users always upload.
+    const finishSim = () => {
+      $('asf-drop').style.display = 'none';
+      $('asf-uploaded').classList.add('show');
+      simulated = true;
+      const line = $('asf-scanline'); line.classList.add('done');
+      const gc = games.length;
+      $('asf-scanText').textContent = `Found 2 players on court · ${gc} game${gc===1?'':'s'} detected (simulated)`;
+      $('asf-simnote').hidden = false;
+      uploadDone = true; $('asf-nextBtn').disabled = false; renderStepper();
+    };
     let p = 0;
-    if (reduce){ bar.style.width = '100%'; finishUp(); return; }
-    const t = setInterval(() => { p += Math.random()*22 + 8; if (p >= 100){ p = 100; clearInterval(t); bar.style.width = '100%'; finishUp(); } else bar.style.width = p + '%'; }, 160);
+    if (reduce){ bar.style.width = '100%'; finishSim(); return; }
+    const t = setInterval(() => { p += Math.random()*22 + 8; if (p >= 100){ p = 100; clearInterval(t); bar.style.width = '100%'; finishSim(); } else bar.style.width = p + '%'; }, 160);
   }
 
-  // Run the REAL interactive scan: POST /api/autoseg/scan spawns the ~1–2 min GPU
-  // whole-match scan and returns a call_id; we poll /api/autoseg/scan-status until
-  // it returns the detected games + the two players' seed boxes/crops. Any failure
-  // (no key, endpoint down, timeout, soft error) falls back to the labelled
-  // simulated spans so the flow never dead-ends.
-  async function detectPlayers(){
-    if (realVideoKey){
-      try {
-        const sp = await fetch(`${API_BASE}/api/autoseg/scan`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoKey: realVideoKey })
-        }).then(r => r.ok ? r.json() : null);
-        const callId = sp && sp.call_id;
-        if (callId){
-          // poll up to ~4 min (5s cadence)
-          for (let i = 0; i < 48; i++){
-            const d = await fetch(`${API_BASE}/api/autoseg/scan-status`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ call_id: callId })
-            }).then(r => r.json()).catch(() => null);
-            if (d && d.status === 'ok' && Array.isArray(d.games) && d.games.length){
-              scanData = d;
-              games = d.games.map(g => [Math.round(g.start_sec||0), Math.round(g.end_sec||0)]);
-              DUR = games[games.length-1][1] || DUR;
-              simulated = false;
-              return d;
-            }
-            if (d && d.status && d.status !== 'scanning') break;  // hard error → simulate
-            await new Promise(res => setTimeout(res, 5000));
-          }
-        }
-      } catch(_){ /* endpoint unreachable → simulate */ }
+  // Upload is done (or a real key was injected): unblock the flow so the user can
+  // name players immediately, and kick off the real scan IN PARALLEL. This is the
+  // fix for the who's-who-shows-placeholder bug — we never block on the scan here.
+  function onRealUploadComplete(){
+    simulated = false;
+    uploadDone = true;
+    // This is a real run, not the internal preview — drop the "Preview" badge so
+    // users don't read the live flow as a mock.
+    const badge = $('asf-badge'); if (badge) badge.style.display = 'none';
+    $('asf-nextBtn').disabled = false;
+    startScan();
+    renderStepper();
+  }
+
+  // Reflect scanState in the step-1 scan line.
+  function updateScanUi(){
+    const line = $('asf-scanline');
+    if (scanState === 'scanning'){
+      $('asf-scanText').textContent = 'Detecting players & games… (~1–2 min) — you can name the players now';
+      line.classList.remove('done');
+    } else if (scanState === 'done'){
+      const gc = (scanData && scanData.games) ? scanData.games.length : games.length;
+      $('asf-scanText').textContent = `Found 2 players on court · ${gc} game${gc===1?'':'s'} detected`;
+      line.classList.add('done');
+    } else if (scanState === 'error'){
+      $('asf-scanText').textContent = 'Couldn’t detect players — ' + (scanError || 'please try again');
+      line.classList.remove('done');
     }
-    simulated = true;
-    return null;
+    $('asf-simnote').hidden = true;  // real run: never show the "simulated" note
+  }
+
+  // Start (or restart) the real scan. Runs once; safe to call again only after an
+  // error (used by the who's-who Retry button).
+  function startScan(){
+    if (!realVideoKey || scanState === 'scanning' || scanState === 'done') return;
+    scanState = 'scanning'; scanError = '';
+    updateScanUi();
+    if (step === 3) renderWho();
+    scanPromise = runScan().then(d => {
+      scanData = d;
+      games = d.games.map(g => [Math.round(g.start_sec||0), Math.round(g.end_sec||0)]);
+      DUR = games[games.length-1][1] || DUR;
+      scanState = 'done';
+    }).catch(err => {
+      scanState = 'error'; scanError = (err && err.message) ? err.message : 'scan failed';
+    }).finally(() => {
+      updateScanUi();
+      if (step === 3) show();   // refreshes the who's-who render + Start-tracking button
+    });
+    return scanPromise;
+  }
+
+  // Spawn the GPU scan and poll it. Extended to ~6 min to cover a real full-match
+  // scan. Throws on a hard error or timeout — callers show a clear message, NOT
+  // the simulated placeholder.
+  async function runScan(){
+    const sp = await fetch(`${API_BASE}/api/autoseg/scan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoKey: realVideoKey })
+    }).then(r => r.ok ? r.json() : null).catch(() => null);
+    const callId = sp && sp.call_id;
+    if (!callId) throw new Error('couldn’t start the scan');
+    // ~6 minutes at a 5s cadence (72 polls).
+    for (let i = 0; i < 72; i++){
+      const d = await fetch(`${API_BASE}/api/autoseg/scan-status`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ call_id: callId })
+      }).then(r => r.json()).catch(() => null);
+      if (d && d.status === 'ok' && Array.isArray(d.games) && d.games.length) return d;
+      if (d && d.status && d.status !== 'scanning') throw new Error(d.message || 'the scan failed');
+      await new Promise(res => setTimeout(res, 5000));
+    }
+    throw new Error('detection timed out — please try again');
   }
 
   /* ---- step 3: assign names to boxes ---- */
@@ -14635,17 +14870,61 @@ window.__autosegBridge = {
   const pImg = (u, c) => u
     ? `<img src="${u}" alt="detected player" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block">`
     : boxCrop(c);
+  // Neutral skeleton chip (spinner / warning) — used while detecting or on error.
+  // Deliberately NOT the stylized boxCrop art, so a loading/failed state can never
+  // be mistaken for a real detected player.
+  function skelChip(kind){
+    const inner = kind === 'error'
+      ? '<span style="font-size:20px">⚠</span>'
+      : '<span class="asf-spin" style="width:16px;height:16px"></span>';
+    return `<div style="width:100%;height:100%;display:grid;place-items:center;background:#0b0e12;border-radius:inherit;color:#6b7684">${inner}</div>`;
+  }
+  function frameState(html){ $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME</span>' + html; }
+
   function renderWho(){
-    const pl = scanData && Array.isArray(scanData.players) ? scanData.players : null;
-    if (pl && !simulated && scanData.seed_frame_url){
-      $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
-        `<img src="${scanData.seed_frame_url}" alt="Seed frame with both players boxed" style="width:100%;height:100%;object-fit:contain;background:#0b0e12;border-radius:inherit;display:block">`;
-    } else {
-      $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
-        court({ p1:[30,62], p2:[68,48], labels:[nm(coralIdx()), nm(azureIdx())] });
+    const realMode = !!realVideoKey;
+
+    // ---- Real run: the who's-who ALWAYS reflects the real scan. Never show the
+    // stylized placeholder as if it were detection. ----
+    if (realMode){
+      if (scanState === 'done' && scanData && scanData.seed_frame_url && Array.isArray(scanData.players)){
+        const pl = scanData.players;
+        $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
+          `<img src="${scanData.seed_frame_url}" alt="Seed frame with both players boxed" style="width:100%;height:100%;object-fit:contain;background:#0b0e12;border-radius:inherit;display:block">`;
+        $('asf-chipCoral').innerHTML = pImg(pl[0] && pl[0].crop, 'var(--asf-p1)');
+        $('asf-chipAzure').innerHTML = pImg(pl[1] && pl[1].crop, 'var(--asf-p2)');
+      } else if (scanState === 'error'){
+        frameState(`<div style="width:100%;height:100%;display:grid;place-items:center;text-align:center;padding:16px;background:#0b0e12;color:#e6b0b0">
+          <div><div style="font-size:24px;margin-bottom:8px">⚠</div>
+          <div style="font-weight:600;margin-bottom:4px">Couldn’t detect the players</div>
+          <div style="font-size:13px;color:#9aa4b0;margin-bottom:12px">${scanError || 'The scan didn’t finish.'}</div>
+          <button id="asf-retryScan" type="button" style="background:#1f6feb;color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer">Retry detection</button>
+          </div></div>`);
+        $('asf-chipCoral').innerHTML = skelChip('error');
+        $('asf-chipAzure').innerHTML = skelChip('error');
+        const rb = $('asf-retryScan'); if (rb) rb.addEventListener('click', () => { scanState = 'idle'; startScan(); renderWho(); show(); });
+      } else {
+        // scanning / idle → genuine loading state, and wait for the scan.
+        frameState(`<div style="width:100%;height:100%;display:grid;place-items:center;text-align:center;padding:16px;background:#0b0e12;color:#9aa4b0">
+          <div><div style="margin-bottom:10px"><span class="asf-spin" style="width:26px;height:26px"></span></div>
+          <div style="font-weight:600;color:#e5e9ef">Detecting players…</div>
+          <div style="font-size:13px;margin-top:4px">Scanning your whole match (~1–2 min). This finishes before tracking starts.</div>
+          </div></div>`);
+        $('asf-chipCoral').innerHTML = skelChip('loading');
+        $('asf-chipAzure').innerHTML = skelChip('loading');
+        // ensure the scan is running; when it resolves, startScan()'s finally re-renders.
+        if (scanState === 'idle') startScan();
+      }
+      $('asf-coralName').textContent = nm(coralIdx());
+      $('asf-azureName').textContent = nm(azureIdx());
+      return;
     }
-    $('asf-chipCoral').innerHTML = pImg(pl && pl[0] && pl[0].crop, 'var(--asf-p1)');
-    $('asf-chipAzure').innerHTML = pImg(pl && pl[1] && pl[1].crop, 'var(--asf-p2)');
+
+    // ---- Preview mode only (no real key): stylized art, clearly a preview. ----
+    $('asf-whoFrame').innerHTML = '<span class="asf-ftag">SEED FRAME · both players apart ✓</span>' +
+      court({ p1:[30,62], p2:[68,48], labels:[nm(coralIdx()), nm(azureIdx())] });
+    $('asf-chipCoral').innerHTML = boxCrop('var(--asf-p1)');
+    $('asf-chipAzure').innerHTML = boxCrop('var(--asf-p2)');
     $('asf-coralName').textContent = nm(coralIdx());
     $('asf-azureName').textContent = nm(azureIdx());
   }
