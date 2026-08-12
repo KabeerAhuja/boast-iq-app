@@ -14191,8 +14191,18 @@ window.__autosegBridge = {
   // enforces the same auth/paywall/trial gates. Returns the videoKey once the
   // upload is actually in flight, or null if a gate blocked it.
   async uploadFile(file) {
+    // handleFile kicks off create-job + the signed PUT + prepare, but returns
+    // BEFORE the bytes reach GCS (uploadPromise resolves only after `await
+    // put.promise`). We MUST await that here so the caller doesn't scan/track a
+    // key whose source video isn't in GCS yet (the "no source video" live bug).
     await handleFile(file);
-    return uploadPromise ? parentVideoKey : null;
+    if (!uploadPromise) return null;   // a gate (auth/paywall/trial) blocked the upload
+    try {
+      await uploadPromise;             // resolves once the source video is fully uploaded to GCS
+    } catch (e) {
+      return null;                     // upload failed (startUpload surfaces its own message)
+    }
+    return parentVideoKey;
   },
   // Show the app's process view as the "Analyzing your match" page IMMEDIATELY
   // after upload — before the scan even finishes — so the user is never parked on
@@ -14214,6 +14224,9 @@ window.__autosegBridge = {
       stopPhaseCreep();
       updateOverallProgress(0, "Couldn’t analyze this video — " + (msg || "please re-upload."));
     } catch (_) {}
+  },
+  setAnalyzingStatus(msg) {
+    try { setPhaseSubText(msg); } catch (_) {}
   },
   // Analyze-first: start the WHOLE pipeline with NO naming. Tracks all detected
   // games auto-seeded (backend auto_segment_seed, keyed on __gN, when the backend
@@ -14635,12 +14648,34 @@ window.__autosegBridge = {
   function beginAutoAnalyze(){
     trackingStarted = true;
     window.__autosegBridge.beginAnalyzing();          // show the analyzing page NOW
-    runScan().then(async d => {
+    // Upload is already fully complete here (uploadFile awaited uploadPromise), so
+    // the source is in GCS. runScanWithSourceRetry is a small belt-and-suspenders:
+    // if the scanner momentarily can't see the just-written object, wait and retry
+    // rather than surfacing a scary "no source / couldn't analyze".
+    runScanWithSourceRetry().then(async d => {
       scanData = d; scanState = 'done';
       await window.__autosegBridge.startAutoPipeline(d);  // start tracking (auto-seeded)
     }).catch(err => {
       window.__autosegBridge.analyzingError(err && err.message ? err.message : 'detection failed');
     });
+  }
+
+  async function runScanWithSourceRetry(){
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++){
+      try { return await runScan(); }
+      catch(err){
+        lastErr = err;
+        const msg = ((err && err.message) || '').toLowerCase();
+        if (msg.indexOf('no source') >= 0 || msg.indexOf('source video') >= 0){
+          window.__autosegBridge.setAnalyzingStatus && window.__autosegBridge.setAnalyzingStatus('Finishing upload…');
+          await new Promise(r => setTimeout(r, 5000));
+          continue;   // source not visible yet → wait & retry, don't error out
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
   }
 
   // ---- Name & tag AFTER processing (called by the app when tracking completes).
