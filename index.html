@@ -14056,11 +14056,16 @@ function applyAnalyzingUi(nGames) {
 // Pending "name after processing" data (crops from the scan). Kept in memory and
 // mirrored to localStorage so it survives leave-and-come-back in the same browser.
 function autosegGetNaming(key) {
+  // A multi-game match is keyed on the PARENT; each game opens under parentKey__gN.
+  // Match the pending naming by the exact key, its parent, or the game-key list.
+  const parent = String(key || "").replace(/__g\d+$/, "");
+  const matches = (o) => o && !o.done &&
+    (o.videoKey === key || o.videoKey === parent || (Array.isArray(o.gameKeys) && o.gameKeys.indexOf(key) >= 0));
   const w = window.__autosegPendingNaming;
-  if (w && w.videoKey === key && !w.done) return w;
+  if (matches(w)) return w;
   try {
-    const s = localStorage.getItem("autoseg_naming_" + key);
-    if (s) { const o = JSON.parse(s); if (o && !o.done) { window.__autosegPendingNaming = o; return o; } }
+    const s = localStorage.getItem("autoseg_naming_" + parent) || localStorage.getItem("autoseg_naming_" + key);
+    if (s) { const o = JSON.parse(s); if (matches(o)) { window.__autosegPendingNaming = o; return o; } }
   } catch (_) {}
   return null;
 }
@@ -14143,26 +14148,38 @@ window.__autosegBridge = {
 
     applyAnalyzingUi(gameSegments.length);
     await spawnGameJobs();   // starts tracking; single-game shows the (analyzing) process view
+    // Record the per-game keys spawnGameJobs created (single-game: [parentKey];
+    // multi-game: [parentKey__g1 … __gN]) so the after-processing naming step can
+    // apply the names the user enters ONCE across every game of the match.
+    naming.gameKeys = (gameVideoKeys && gameVideoKeys.length) ? gameVideoKeys.slice() : [parentVideoKey];
+    window.__autosegPendingNaming = naming;
+    try { localStorage.setItem("autoseg_naming_" + parentVideoKey, JSON.stringify(naming)); } catch (_) {}
     // Multi-game has no single processing view — each game processes on My Videos.
     if (gameSegments.length > 1) { try { showStep("videos"); } catch (_) {} }
   },
-  // Save the names the user assigned AFTER processing. Updates the video doc's
-  // playerConfig (what the dashboard reads) so labels show immediately, and mirrors
-  // to GCS via /api/autoseg/confirm (best-effort). Runs before the dashboard opens.
-  async saveNames(videoKey, names) {
+  // Save the names the user assigned AFTER processing. Updates each game doc's
+  // playerConfig (what the dashboard reads — the app's existing post-processing
+  // rename path) so labels show immediately, and mirrors to GCS via
+  // /api/autoseg/confirm (best-effort). `keys` is the game-key list: a single
+  // [parentKey] for one game, or [parentKey__g1 … __gN] to name a whole match at
+  // once. Runs before the dashboard opens.
+  async saveNames(videoKey, names, keys) {
     const cfg = {
       player_1: { name: (names && names.name1) || "Player 1", handedness: "right" },
       player_2: { name: (names && names.name2) || "Player 2", handedness: "right" },
     };
     playerConfig = cfg;
-    try { await updateDoc(doc(fbFirestore, "videos", videoKey), { playerConfig: cfg }); }
-    catch (e) { console.warn("playerConfig update failed:", e); }
-    try {
-      await fetch(`${API}/api/autoseg/confirm`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoKey, player_1: cfg.player_1, player_2: cfg.player_2 }),
-      });
-    } catch (_) {}
+    const targets = (Array.isArray(keys) && keys.length) ? keys : [videoKey];
+    for (const k of targets) {
+      try { await updateDoc(doc(fbFirestore, "videos", k), { playerConfig: cfg }); }
+      catch (e) { console.warn("playerConfig update failed for", k, e); }
+      try {
+        await fetch(`${API}/api/autoseg/confirm`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoKey: k, player_1: cfg.player_1, player_2: cfg.player_2 }),
+        });
+      } catch (_) {}
+    }
   },
 };
 </script>
@@ -14444,6 +14461,8 @@ window.__autosegBridge = {
   // window.__asfOpenNaming(). namingMode reuses the step-3 who's-who screen.
   let namingMode = false;
   let namingDone = null;        // callback to open the dashboard after names are saved
+  let namingKeys = null;        // game keys to apply the names to (whole match at once)
+  let namingParent = null;      // parent key (for clearing the persisted stash)
   let games = [ [0,648],[756,1570],[1700,2225],[2380,3073] ], DUR = 3073;  // sim fallback spans
   const names = { 1:'', 2:'' };
   const nm = i => (names[i]||'').trim() || ('Player '+i);
@@ -14528,6 +14547,10 @@ window.__autosegBridge = {
     realVideoKey = videoKey;
     scanData = { players: (naming && naming.players) || [], seed_frame_url: (naming && naming.seed_frame_url) || null, games: (naming && naming.games) || [] };
     scanState = 'done'; simulated = false; namingMode = true;
+    // Apply the entered names to EVERY game of the match (multi-game) at once, or
+    // just this key (single game). namingParent is what we clear from localStorage.
+    namingKeys = (naming && Array.isArray(naming.gameKeys) && naming.gameKeys.length) ? naming.gameKeys.slice() : [videoKey];
+    namingParent = (naming && naming.videoKey) || videoKey;
     namingDone = (typeof onDone === 'function') ? onDone : function(){};
     overlay.hidden = false; document.body.style.overflow = 'hidden';
     step = 3; uploadDone = true;
@@ -14542,10 +14565,12 @@ window.__autosegBridge = {
   async function confirmNaming(){
     const btn = $('asf-nextBtn'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      await window.__autosegBridge.saveNames(realVideoKey, { name1: nm(coralIdx()), name2: nm(azureIdx()) });
-      try { localStorage.removeItem('autoseg_naming_' + realVideoKey); } catch(_){}
+      // Apply the names to every game key of the match (single game → just its key).
+      const keys = (namingKeys && namingKeys.length) ? namingKeys : [realVideoKey];
+      await window.__autosegBridge.saveNames(realVideoKey, { name1: nm(coralIdx()), name2: nm(azureIdx()) }, keys);
+      try { localStorage.removeItem('autoseg_naming_' + (namingParent || realVideoKey)); } catch(_){}
       if (window.__autosegPendingNaming) window.__autosegPendingNaming.done = true;
-      const done = namingDone; namingDone = null; namingMode = false;
+      const done = namingDone; namingDone = null; namingMode = false; namingKeys = null; namingParent = null;
       const stepper = $('asf-stepper'); if (stepper) stepper.style.display = '';
       close();
       if (done) done();
