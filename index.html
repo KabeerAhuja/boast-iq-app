@@ -6134,8 +6134,8 @@ document.querySelectorAll("[data-tab]").forEach(btn => btn.addEventListener("cli
   else if (t === "videos") goToMyVideos();
   else if (t === "profile") openProfilePage();
 }));
-document.getElementById("nav-upload").addEventListener("click", () => showStep("upload"));
-document.getElementById("bottomnav-fab").addEventListener("click", () => showStep("upload"));
+document.getElementById("nav-upload").addEventListener("click", () => goToUpload());
+document.getElementById("bottomnav-fab").addEventListener("click", () => goToUpload());
 
 // ---- My Videos list ----
 // In-memory holder so the coach filter can re-render without re-querying.
@@ -9095,7 +9095,7 @@ document.getElementById("p1-badge").addEventListener("click", () => setActivePla
 document.getElementById("p2-badge").addEventListener("click", () => setActivePlayer(2));
 document.getElementById("btn-reset-pts").addEventListener("click", () => { player1 = null; player2 = null; setActivePlayer(1); drawFrame(document.getElementById("frame-canvas").getContext("2d"), frameImage); updatePointBadges(); });
 document.getElementById("btn-start").addEventListener("click", onSelectStartClick);
-document.getElementById("btn-new-upload").addEventListener("click", () => showStep("upload"));
+document.getElementById("btn-new-upload").addEventListener("click", () => goToUpload());
 
 // ===========================================================================
 // Mark Games step: pill toggle between Single Game and Mark Games. In Single
@@ -14002,6 +14002,65 @@ if (window.__IS_DEMO__) {
     }).join("");
   });
 })();
+
+// ===================================================================
+// FS-0004 auto-segment bridge — the intake modal lives in a separate
+// CLASSIC <script> and cannot see this module's bindings. Expose exactly the
+// operations it needs, so the modal reuses the app's real upload + tracking
+// engine instead of reinventing them. All of this is inert unless the modal
+// (which sets window.__AUTO_SEGMENT_ENABLED) calls it.
+// ===================================================================
+
+// Seam 3: the main Upload CTAs route here. When the intake flow is enabled and
+// present, open it; otherwise fall back to the classic manual upload step.
+function goToUpload() {
+  if (window.__AUTO_SEGMENT_ENABLED && typeof window.openAutoSegmentIntake === "function") {
+    try { window.openAutoSegmentIntake(); return; } catch (_) { /* fall through to manual */ }
+  }
+  showStep("upload");
+}
+
+window.__autosegBridge = {
+  // Seam 1: real upload via the app's existing authenticated path (handleFile →
+  // create-job → get-upload-url → signed PUT → prepare). handleFile sets videoKey,
+  // parentVideoKey, videoMeta, firebasePath, uploadPromise, preparePromise and
+  // enforces the same auth/paywall/trial gates. Returns the videoKey once the
+  // upload is actually in flight, or null if a gate blocked it.
+  async uploadFile(file) {
+    await handleFile(file);
+    return uploadPromise ? parentVideoKey : null;
+  },
+  // Seam 2: start the app's REAL per-game tracking for the scanned games by
+  // reusing spawnGameJobs() — the exact engine the manual flow uses. We pass the
+  // detected spans as the per-game trims and the confirmed names as playerConfig.
+  // Per-game seed points/trim are refined server-side by the deployed auto-seed
+  // (auto_segment_seed, keyed on __gN) when the backend AUTO_SEGMENT_ENABLED flag
+  // is set; game-1's real seed is used as the client-side placeholder.
+  async startTracking(scan, opts) {
+    opts = opts || {};
+    const gs = (scan && scan.games) || [];
+    if (!gs.length) throw new Error("no games detected");
+    const pl = (scan && scan.players) || [];
+    const p1pt = (pl[0] && pl[0].seed_point) || null;
+    const p2pt = (pl[1] && pl[1].seed_point) || null;
+    playerConfig = {
+      player_1: { name: opts.name1 || "Player 1", handedness: opts.hand1 || "right" },
+      player_2: { name: opts.name2 || "Player 2", handedness: opts.hand2 || "right" },
+    };
+    gameSegments = gs.map((g) => ({
+      startFrame: g.start_frame | 0,
+      endFrame: g.end_frame | 0,
+      startSec: g.start_sec || 0,
+      endSec: g.end_sec || 0,
+    }));
+    perGamePlayerPositions = gameSegments.map(() => ({ player1: p1pt, player2: p2pt }));
+    await spawnGameJobs();
+    // Land the user on the app's real view: single-game shows the live process
+    // screen (spawnGameJobs already switched to it); multi-game has no single
+    // view, so surface My Videos where each game shows its own progress.
+    if (gameSegments.length > 1) { try { showStep("videos"); } catch (_) {} }
+  },
+};
 </script>
 
 <!-- ===================================================================== -->
@@ -14245,6 +14304,11 @@ if (window.__IS_DEMO__) {
   // auto-segment intake (falls back to the manual upload flow) without a redeploy
   // of the backend. The interactive scan endpoints (/api/autoseg/*) are live.
   const AUTO_SEGMENT_ENABLED = true;
+  // Publish the gate to the app module (a separate <script type=module> that
+  // can't see this classic script's bindings) so the main Upload CTAs know to
+  // open this flow. Flip AUTO_SEGMENT_ENABLED to false → CTAs fall back to the
+  // manual upload step instantly, no redeploy.
+  window.__AUTO_SEGMENT_ENABLED = AUTO_SEGMENT_ENABLED;
   const _q = (() => { try { return new URLSearchParams(location.search); } catch(_) { return new URLSearchParams(); } })();
   // API_BASE resolves to the app's global API; ?api=<url> overrides it for local
   // testing against an ephemeral `modal serve` URL. realVideoKey can be injected
@@ -14265,11 +14329,12 @@ if (window.__IS_DEMO__) {
   let simulated = true;         // true until a real scan endpoint answers
   let scanData = null;          // full real scan response (players, crops, seed frame)
   let confirmSent = false;      // guard so /api/autoseg/confirm fires once
+  let trackingStarted = false;  // set once the app's real tracking has been kicked off
   let games = [ [0,648],[756,1570],[1700,2225],[2380,3073] ], DUR = 3073;  // sim fallback spans
   const names = { 1:'', 2:'' };
   const nm = i => (names[i]||'').trim() || ('Player '+i);
   // Small hooks for automated verification / external entry points.
-  window.__asfState = { get uploadDone(){ return uploadDone; }, get step(){ return step; }, get simulated(){ return simulated; } };
+  window.__asfState = { get uploadDone(){ return uploadDone; }, get step(){ return step; }, get simulated(){ return simulated; }, get realVideoKey(){ return realVideoKey; }, get trackingStarted(){ return trackingStarted; } };
   window.__asfStartUpload = () => startUpload(null);
 
   /* ---- reusable camera-view court (from approved mockup) ---- */
@@ -14322,7 +14387,31 @@ if (window.__IS_DEMO__) {
     overlay.querySelectorAll('.asf-step-sep').forEach(x => x.classList.toggle('done', +x.dataset.sep < step));
   }
   function go(s){ if (s < 1 || s > 4) return; if (s > 1 && !uploadDone) return; step = s; show(); }
-  function next(){ if (step === 1 && !uploadDone){ startUpload(null); return; } if (step < 4) go(step + 1); }
+  function next(){
+    if (step === 1 && !uploadDone){ if (AUTO_SEGMENT_ENABLED) $('asf-file').click(); else startUpload(null); return; }
+    // Real run: confirming who's-who starts the app's REAL per-game tracking and
+    // hands off to the app's normal processing view. Preview falls through to the
+    // simulated step-4 animation.
+    if (step === 3 && realVideoKey && !simulated && window.__autosegBridge){ startRealTracking(); return; }
+    if (step < 4) go(step + 1);
+  }
+
+  // Seam 2: kick off real tracking via the app bridge (reuses spawnGameJobs),
+  // then close the modal so the user lands on the app's live process / My Videos
+  // view where each game shows real progress.
+  async function startRealTracking(){
+    sendConfirm();  // persist the confirmed names (fire-and-forget)
+    const nextBtn = $('asf-nextBtn');
+    nextBtn.disabled = true; nextBtn.textContent = 'Starting…';
+    try {
+      await window.__autosegBridge.startTracking(scanData, { name1: nm(coralIdx()), name2: nm(azureIdx()) });
+      trackingStarted = true;
+      close();
+    } catch(err){
+      nextBtn.disabled = false; nextBtn.textContent = 'Start tracking →';
+      alert('Could not start tracking: ' + (err && err.message ? err.message : err));
+    }
+  }
   function show(){
     overlay.querySelectorAll('.asf-screen').forEach(sc => sc.classList.toggle('active', +sc.dataset.screen === step));
     renderStepper();
@@ -14343,17 +14432,12 @@ if (window.__IS_DEMO__) {
 
   function humanSize(bytes){ if (!bytes) return 'whole match'; const mb = bytes/1048576; return (mb >= 1024 ? (mb/1024).toFixed(1)+' GB' : Math.round(mb)+' MB'); }
 
-  function startUpload(file){
+  async function startUpload(file){
     if (uploadDone) return;
     $('asf-upThumb').innerHTML = court({ labels: null });
     if (file){ $('asf-fname').textContent = file.name; $('asf-fsize').textContent = humanSize(file.size); }
     const prog = $('asf-upprog'); prog.style.display = 'block';
     const bar = prog.querySelector('i');
-    // SEAM: real upload goes here — reuse the app's existing authenticated
-    // upload (uploadVideo / signed-PUT flow) to push `file` to GCS and obtain a
-    // real videoKey, then set realVideoKey and simulated=false. Deferred: the
-    // preview path does not upload. See handoff.
-    let p = 0;
     const finishUp = () => {
       $('asf-drop').style.display = 'none';
       $('asf-uploaded').classList.add('show');
@@ -14366,6 +14450,39 @@ if (window.__IS_DEMO__) {
         uploadDone = true; $('asf-nextBtn').disabled = false; renderStepper();
       });
     };
+
+    // Seam 1: REAL upload. A real file + the app bridge → push the file to GCS
+    // via the app's existing authenticated upload (create-job → signed PUT →
+    // prepare), then scan the just-uploaded video. bridge.uploadFile resolves the
+    // real videoKey only after the bytes are in GCS (or null if a gate blocked it).
+    if (file && AUTO_SEGMENT_ENABLED && window.__autosegBridge){
+      $('asf-drop').style.display = 'none';
+      $('asf-uploaded').classList.add('show');
+      $('asf-scanText').textContent = 'Uploading your match…';
+      bar.style.width = '12%';
+      let up = 12;
+      const ut = setInterval(() => { up = Math.min(92, up + Math.random()*6 + 1); bar.style.width = up + '%'; }, 500);
+      try {
+        const key = await window.__autosegBridge.uploadFile(file);
+        clearInterval(ut); bar.style.width = '100%';
+        if (!key){
+          // A paywall/trial/auth gate stopped the upload; the app surfaced its own
+          // UI (e.g. the upgrade modal). Close this overlay so it's visible.
+          close();
+          return;
+        }
+        realVideoKey = key;
+        $('asf-scanText').textContent = 'Scanning for players on court…';
+        finishUp();
+      } catch(err){
+        clearInterval(ut);
+        $('asf-scanText').textContent = 'Upload failed — ' + ((err && err.message) ? err.message : 'please try again');
+      }
+      return;
+    }
+
+    // Preview path (no file / flow disabled): simulated progress + detection.
+    let p = 0;
     if (reduce){ bar.style.width = '100%'; finishUp(); return; }
     const t = setInterval(() => { p += Math.random()*22 + 8; if (p >= 100){ p = 100; clearInterval(t); bar.style.width = '100%'; finishUp(); } else bar.style.width = p + '%'; }, 160);
   }
