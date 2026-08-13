@@ -3884,6 +3884,23 @@
   }
   .dash-stats-toggle button.active { background: var(--accent); color: #000; }
 
+  /* Multi-game nav pills — same segmented-control language as .dash-stats-toggle */
+  .game-nav-pills {
+    display: inline-flex; flex-wrap: wrap; gap: 2px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; padding: 2px;
+    margin: 0 0 16px;
+  }
+  .game-nav-pills button {
+    background: none; border: 0; color: var(--text-dim);
+    padding: 6px 14px; border-radius: 6px;
+    font-family: inherit; font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .game-nav-pills button:hover:not(.active) { color: var(--text); }
+  .game-nav-pills button.active { background: var(--accent); color: #000; cursor: default; }
+
   .dash-stats-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
   }
@@ -5011,6 +5028,9 @@
   <!-- Step 5: Results -->
   <div id="step-results" class="step">
     <span id="results-summary" hidden></span>
+
+    <!-- Multi-game nav pills (populated by renderGameNavPills; hidden for single-game videos) -->
+    <div class="game-nav-pills" id="game-nav-pills" role="tablist" aria-label="Games in this match" hidden></div>
 
     <div class="dashboard">
       <div class="dash-left">
@@ -6784,9 +6804,43 @@ async function openVideo(key, data) {
   // (No currentUser at all → public share view → never show it.)
   const shareBtn = document.getElementById("btn-dash-share");
   if (shareBtn) shareBtn.style.display = (data.ownerUid === currentUser?.uid) ? "inline-flex" : "none";
+  renderGameNavPills(data);
   videoBlobUrl = await sourceUrlPromise;
   showStep("results");
   showResults({});
+}
+
+// Render the top-of-page "Game 1 / Game 2 / …" nav pills for multi-game matches.
+// A multi-game match splits into per-game docs `<parentVideoKey>__gN`, each carrying
+// parentVideoKey / gameIndex / gameCount. Single-game uploads reuse the parent key
+// and have no gameCount > 1 — for those we render nothing (no row, no layout shift).
+function renderGameNavPills(data) {
+  const host = document.getElementById("game-nav-pills");
+  if (!host) return;
+  const parent = data && data.parentVideoKey;
+  const count = Number(data && data.gameCount) || 0;
+  const current = Number(data && data.gameIndex) || 0;
+  if (!parent || count <= 1) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = "";
+  for (let n = 1; n <= count; n++) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("role", "tab");
+    btn.textContent = `Game ${n}`;
+    if (n === current) {
+      btn.classList.add("active");
+      btn.setAttribute("aria-selected", "true");
+    } else {
+      const targetKey = makeGameVideoKey(parent, n);
+      btn.addEventListener("click", () => goToVideoPage(targetKey));
+    }
+    host.appendChild(btn);
+  }
+  host.hidden = false;
 }
 
 // ---- Processing preview (raw video + live status bar while tracking runs) ----
