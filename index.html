@@ -14179,10 +14179,14 @@ function autosegGetNaming(key) {
 // If naming is pending for `key`, show the who's-who naming step (real crops)
 // FIRST and run `cont` after the user confirms; otherwise run `cont` now.
 // Returns true if it intercepted. This is the "name AFTER processing" hook.
+// Per-game naming: each game of a match prompts once, the first time it's opened
+// (tracked by a per-key localStorage flag). Opening Game 2 still prompts after
+// Game 1 was named — its fields pre-fill with the names entered earlier.
+function autosegIsNamed(key) { try { return localStorage.getItem("autoseg_named_" + key) === "1"; } catch (_) { return false; } }
+function autosegMarkNamed(key) { try { localStorage.setItem("autoseg_named_" + key, "1"); } catch (_) {} }
 function autosegMaybeName(key, cont) {
   const naming = autosegGetNaming(key);
-  if (naming && !naming.done && typeof window.__asfOpenNaming === "function") {
-    naming.done = true;
+  if (naming && !autosegIsNamed(key) && typeof window.__asfOpenNaming === "function") {
     window.__asfOpenNaming(key, naming, cont);
     return true;
   }
@@ -14403,6 +14407,10 @@ window.__autosegBridge = {
 #asf-overlay .asf-assignrow.p1 .asf-who .asf-k{color:var(--asf-p1)}
 #asf-overlay .asf-assignrow.p2 .asf-who .asf-k{color:var(--asf-p2)}
 #asf-overlay .asf-who .asf-nm{font-size:17px;font-weight:600;margin-top:2px;letter-spacing:-.2px}
+#asf-overlay .asf-nm-input{width:100%;max-width:280px;background:transparent;border:0;border-bottom:1.5px solid var(--asf-line-soft);color:inherit;font-family:inherit;font-size:17px;font-weight:600;letter-spacing:-.2px;padding:3px 0;margin-top:1px;outline:none;transition:border-color .15s}
+#asf-overlay .asf-assignrow.p1 .asf-nm-input:focus{border-bottom-color:var(--asf-p1)}
+#asf-overlay .asf-assignrow.p2 .asf-nm-input:focus{border-bottom-color:var(--asf-p2)}
+#asf-overlay .asf-nm-input::placeholder{color:#6b7684;font-weight:500}
 #asf-overlay .asf-swap{display:flex;justify-content:center;margin:2px 0}
 #asf-overlay .asf-swapbtn{font:600 12.5px var(--asf-font-ui);color:var(--asf-text);background:var(--asf-panel);border:1px solid var(--asf-line);border-radius:9px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
 #asf-overlay .asf-swapbtn:hover{border-color:var(--asf-faint)}
@@ -14689,6 +14697,10 @@ window.__autosegBridge = {
     realVideoKey = videoKey;
     scanData = { players: (naming && naming.players) || [], seed_frame_url: (naming && naming.seed_frame_url) || null, games: (naming && naming.games) || [] };
     scanState = 'done'; simulated = false; namingMode = true;
+    // Pre-fill from names entered on an earlier game of the same match, so opening
+    // Game 2/3 shows the names you already typed (editable if you want to tweak).
+    if (naming && naming.names) { names[1] = naming.names[1] || ''; names[2] = naming.names[2] || ''; }
+    swapped = (naming && typeof naming.savedSwapped === 'boolean') ? naming.savedSwapped : false;
     // Apply the entered names to EVERY game of the match (multi-game) at once, or
     // just this key (single game). namingParent is what we clear from localStorage.
     namingKeys = (naming && Array.isArray(naming.gameKeys) && naming.gameKeys.length) ? naming.gameKeys.slice() : [videoKey];
@@ -14710,8 +14722,20 @@ window.__autosegBridge = {
       // Apply the names to every game key of the match (single game → just its key).
       const keys = (namingKeys && namingKeys.length) ? namingKeys : [realVideoKey];
       await window.__autosegBridge.saveNames(realVideoKey, { name1: nm(coralIdx()), name2: nm(azureIdx()) }, keys);
-      try { localStorage.removeItem('autoseg_naming_' + (namingParent || realVideoKey)); } catch(_){}
-      if (window.__autosegPendingNaming) window.__autosegPendingNaming.done = true;
+      autosegMarkNamed(realVideoKey);
+      // Persist the entered names + orientation so the next game of the match
+      // pre-fills instead of showing "Player 1 / Player 2" again.
+      const stash = window.__autosegPendingNaming;
+      if (stash) {
+        stash.names = { 1: names[1], 2: names[2] };
+        stash.savedSwapped = swapped;
+        try { localStorage.setItem('autoseg_naming_' + (namingParent || realVideoKey), JSON.stringify(stash)); } catch(_){}
+      }
+      // Only retire the pending naming once EVERY game of the match has been named.
+      if ((keys || []).every(k => autosegIsNamed(k))) {
+        try { localStorage.removeItem('autoseg_naming_' + (namingParent || realVideoKey)); } catch(_){}
+        if (window.__autosegPendingNaming) window.__autosegPendingNaming.done = true;
+      }
       const done = namingDone; namingDone = null; namingMode = false; namingKeys = null; namingParent = null;
       const stepper = $('asf-stepper'); if (stepper) stepper.style.display = '';
       close();
@@ -14955,8 +14979,19 @@ window.__autosegBridge = {
         // ensure the scan is running; when it resolves, startScan()'s finally re-renders.
         if (scanState === 'idle') startScan();
       }
-      $('asf-coralName').textContent = nm(coralIdx());
-      $('asf-azureName').textContent = nm(azureIdx());
+      // Name-after mode: let the user TYPE each player's real name right here
+      // (one field per box). Otherwise (preview / 2-step flow) show static labels.
+      if (namingMode) {
+        const ci = coralIdx(), ai = azureIdx();
+        const esc = s => String(s || '').replace(/"/g, '&quot;');
+        $('asf-coralName').innerHTML = `<input class="asf-nm-input" type="text" placeholder="Type this player’s name" value="${esc(names[ci])}" autocomplete="off" spellcheck="false">`;
+        $('asf-azureName').innerHTML = `<input class="asf-nm-input" type="text" placeholder="Type this player’s name" value="${esc(names[ai])}" autocomplete="off" spellcheck="false">`;
+        $('asf-coralName').querySelector('input').addEventListener('input', e => { names[ci] = e.target.value; });
+        $('asf-azureName').querySelector('input').addEventListener('input', e => { names[ai] = e.target.value; });
+      } else {
+        $('asf-coralName').textContent = nm(coralIdx());
+        $('asf-azureName').textContent = nm(azureIdx());
+      }
       return;
     }
 
