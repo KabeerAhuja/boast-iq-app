@@ -10682,8 +10682,13 @@ function showResults(msg) {
       }
       try {
         // Cache-first for the index (player names + point count); revalidate lazily.
+        // A cached index showing 0 points is almost always STALE — it was captured
+        // while the game was still processing (points are generated after tracking
+        // finishes). localStorage survives a hard refresh, so trusting a cached 0
+        // would wedge the dashboard permanently. Treat a cached 0 as a miss and
+        // re-fetch so the real point count always wins.
         let indexData = getCachedIndex(videoKey);
-        if (!indexData) {
+        if (!indexData || !(indexData.total_points > 0)) {
           const indexResp = await fetch(`${API}/api/points/${videoKey}/index`);
           if (!indexResp.ok) { await new Promise(r => setTimeout(r, 5000)); return loadMatchAggregates(); }
           indexData = await indexResp.json();
