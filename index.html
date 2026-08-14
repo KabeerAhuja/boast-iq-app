@@ -3884,22 +3884,24 @@
   }
   .dash-stats-toggle button.active { background: var(--accent); color: #000; }
 
-  /* Multi-game nav pills — same segmented-control language as .dash-stats-toggle */
+  /* Multi-game nav pills — individual floating chips (same language as .filter-chip) */
   .game-nav-pills {
-    display: inline-flex; flex-wrap: wrap; gap: 2px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px; padding: 2px;
-    margin: 0 0 16px;
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin: 0 0 18px;
   }
   .game-nav-pills button {
-    background: none; border: 0; color: var(--text-dim);
-    padding: 6px 14px; border-radius: 6px;
-    font-family: inherit; font-size: 12px; font-weight: 500;
+    background: var(--surface-solid); border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 8px 16px; border-radius: 999px;
+    font-family: inherit; font-size: 13px; font-weight: 600;
     cursor: pointer; transition: all 0.15s;
   }
-  .game-nav-pills button:hover:not(.active) { color: var(--text); }
-  .game-nav-pills button.active { background: var(--accent); color: #000; cursor: default; }
+  .game-nav-pills button:hover:not(.active) { color: var(--text); border-color: var(--border-bright); }
+  .game-nav-pills button.active {
+    background: var(--accent); color: #001417; border-color: transparent;
+    box-shadow: 0 6px 18px -8px var(--accent-glow);
+    cursor: default;
+  }
 
   .dash-stats-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
@@ -4263,6 +4265,8 @@
   // mixpanel.com → Project Settings → Project Token. Analytics no-ops until set.
   window.__MIXPANEL_TOKEN__ = '8b963f0f946e46cfe3475794051d56ef';
   window.__DEMO_VIDEO_KEY__ = 'timmy_brownell_9dec483d_2026-08-10_22-25-33__g1';
+  // The demo match is a 3-game match (g1/g2/g3); drives the game-nav pills in demo mode.
+  window.__DEMO_GAME_COUNT__ = 3;
   // Direct public download URL for the demo source video. Uses the Firebase Storage
   // download-token endpoint, which is a public capability URL: it bypasses the Storage
   // security rules (so anonymous visitors can play it) and serves video/mp4 with HTTP
@@ -6834,6 +6838,11 @@ function renderGameNavPills(data) {
     if (n === current) {
       btn.classList.add("active");
       btn.setAttribute("aria-selected", "true");
+    } else if (window.__IS_DEMO__) {
+      // Demo is an anonymous, read-only showcase: it can't open the auth-gated
+      // per-video deep link, so switch games via a full reload of the demo
+      // viewer (?demo&g=N). All games share one source video + public stats.
+      btn.addEventListener("click", () => { window.location.href = `${window.location.pathname}?demo&g=${n}`; });
     } else {
       const targetKey = makeGameVideoKey(parent, n);
       btn.addEventListener("click", () => goToVideoPage(targetKey));
@@ -14130,17 +14139,25 @@ if (window.__IS_DEMO__) {
   console.log("[DEMO] booting read-only viewer for", window.__DEMO_VIDEO_KEY__);
   (async () => {
     try {
-      videoKey = window.__DEMO_VIDEO_KEY__;
+      // The demo match is a 3-game match sharing one source video. `?g=N` picks
+      // which game's stats to show; the nav pills reload the demo with a new g.
+      const demoParent = window.__DEMO_VIDEO_KEY__.replace(/__g\d+$/, "");
+      const demoCount = window.__DEMO_GAME_COUNT__ || 1;
+      const demoGame = Math.min(Math.max(parseInt(new URLSearchParams(window.location.search).get("g"), 10) || 1, 1), demoCount);
+      videoKey = demoCount > 1 ? `${demoParent}__g${demoGame}` : window.__DEMO_VIDEO_KEY__;
       // Use the public tokenized URL directly (see __DEMO_VIDEO_URL__ above).
       // getDownloadURL() would 403 for anonymous visitors because it does a
       // rules-gated metadata read first — that's why the demo was blank for everyone
-      // except the signed-in owner.
+      // except the signed-in owner. All games share this one parent-key source.
       videoBlobUrl = window.__DEMO_VIDEO_URL__ || null;
       // Fallback labels shown before index.json loads (match the source dataset)
       playerConfig = {
         player_1: { name: "Conrad", handedness: "right" },
         player_2: { name: "Mahim", handedness: "left" }
       };
+      // Multi-game nav pills (demo can't read the Firestore doc, so pass the
+      // known match shape explicitly — consistent with the hardcoded demo above).
+      renderGameNavPills({ parentVideoKey: demoParent, gameIndex: demoGame, gameCount: demoCount });
       showStep("results");
       showResults({});
     } catch (err) {
