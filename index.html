@@ -14793,7 +14793,11 @@ window.__autosegBridge = {
       // Apply the names to every game key of the match (single game → just its key).
       const keys = (namingKeys && namingKeys.length) ? namingKeys : [realVideoKey];
       await window.__autosegBridge.saveNames(realVideoKey, { name1: nm(coralIdx()), name2: nm(azureIdx()) }, keys);
-      autosegMarkNamed(realVideoKey);
+      // Per-game "named" flag lives in localStorage. autosegMarkNamed/IsNamed are
+      // defined in the app module script, which this classic IIFE can't reach —
+      // so do the localStorage read/write inline here.
+      const _named = k => { try { return localStorage.getItem('autoseg_named_' + k) === '1'; } catch (_) { return false; } };
+      try { localStorage.setItem('autoseg_named_' + realVideoKey, '1'); } catch (_) {}
       // Persist the entered names + orientation so the next game of the match
       // pre-fills instead of showing "Player 1 / Player 2" again.
       const stash = window.__autosegPendingNaming;
@@ -14803,7 +14807,7 @@ window.__autosegBridge = {
         try { localStorage.setItem('autoseg_naming_' + (namingParent || realVideoKey), JSON.stringify(stash)); } catch(_){}
       }
       // Only retire the pending naming once EVERY game of the match has been named.
-      if ((keys || []).every(k => autosegIsNamed(k))) {
+      if ((keys || []).every(_named)) {
         try { localStorage.removeItem('autoseg_naming_' + (namingParent || realVideoKey)); } catch(_){}
         if (window.__autosegPendingNaming) window.__autosegPendingNaming.done = true;
       }
