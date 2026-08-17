@@ -15164,5 +15164,267 @@ window.__autosegBridge = {
   try { if (new URLSearchParams(location.search).has('autoseg')) open(); } catch(_){}
 })();
 </script>
+
+<!-- =====================================================================
+     Apple-design polish pass (feature/dashboard-apple-ui, Phase 1)
+     Additive & reversible: no existing rules removed. Adds design tokens,
+     a page-load / scroll reveal sequence, press + focus-visible states,
+     softened materials, tightened display typography, and comprehensive
+     prefers-reduced-motion / -transparency / -contrast handling.
+     See AUDIT.md for the finding each rule answers.
+     ===================================================================== -->
+<style id="apple-polish-styles">
+  :root {
+    /* Motion tokens — Apple-ish ease-out (easeOutQuint feel) + a light spring */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+    --dur-press: 110ms;
+    --dur-1: 160ms;
+    --dur-2: 240ms;
+    --dur-3: 440ms;
+    /* Spacing scale (for new work + Phase 2; existing values untouched) */
+    --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+    --space-4: 16px; --space-5: 24px; --space-6: 32px;
+    /* Unified keyboard focus ring */
+    --focus-ring: 0 0 0 3px var(--accent-dim);
+  }
+
+  /* ---- F3: display typography — size-specific tracking + optical sizing ---- */
+  .step-title, .page-title, .header h1, .brand-word,
+  .modal-title, .profile-name {
+    font-optical-sizing: auto;
+  }
+  .step-title { letter-spacing: -0.022em; line-height: 1.06; }
+  .page-title { letter-spacing: -0.02em; line-height: 1.1; }
+  .header h1  { letter-spacing: -0.02em; }
+  .brand-word { letter-spacing: -0.02em; }
+  .modal-title { letter-spacing: -0.015em; }
+  .profile-name { letter-spacing: -0.02em; }
+
+  /* Gradient/clipped headings: solid fallback where transparency is unsafe */
+  @media (prefers-contrast: more), (forced-colors: active) {
+    .step-title, .header h1 {
+      -webkit-text-fill-color: currentColor;
+      color: var(--text);
+      background: none;
+    }
+  }
+
+  /* ---- F2.1: press feedback (respond on pointer-down) ---- */
+  .js-motion .btn,
+  .js-motion .btn-choose-video,
+  .js-motion .tabnav-btn,
+  .js-motion .filter-chip,
+  .js-motion .nav-upload,
+  .js-motion .btn-header,
+  .js-motion .btn-back,
+  .js-motion .video-card {
+    transition-property: transform, box-shadow, background-color, border-color, color, opacity;
+    transition-timing-function: var(--ease-out);
+  }
+  .js-motion .btn:active:not(:disabled),
+  .js-motion .btn-primary:active:not(:disabled),
+  .js-motion .btn-secondary:active:not(:disabled),
+  .js-motion .btn-choose-video:active,
+  .js-motion .nav-upload:active,
+  .js-motion .btn-header:active,
+  .js-motion .btn-back:active,
+  .js-motion .filter-chip:active {
+    transform: scale(0.97);
+    transition-duration: var(--dur-press);
+  }
+  .js-motion .tabnav-btn:active { transform: scale(0.95); }
+  .js-motion .video-card:active { transform: scale(0.985); }
+  .js-motion .bottomnav button:active { transform: scale(0.9); }
+  .js-motion .bottomnav button { transition: transform var(--dur-press) var(--ease-out), color .15s; }
+
+  /* ---- F2.3: soften hover lifts, context-aware card shadow ---- */
+  .js-motion .video-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  }
+  .js-motion .btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+  }
+
+  /* ---- F2.2: unified keyboard focus-visible ring (mouse users unaffected) ---- */
+  .js-motion :is(button, a, input, textarea, select, [tabindex]):focus-visible,
+  .js-motion .video-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: var(--focus-ring);
+  }
+  /* Suppress legacy always-on outlines only when focus isn't from the keyboard */
+  .js-motion button:focus:not(:focus-visible),
+  .js-motion .video-card:focus:not(:focus-visible) { outline: none; }
+
+  /* ---- F5.1: header scroll-edge fade instead of a hard divider ---- */
+  .header::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: -18px;
+    height: 18px;
+    pointer-events: none;
+    background: linear-gradient(rgba(5, 5, 8, 0.55), rgba(5, 5, 8, 0));
+    opacity: 0;
+    transition: opacity var(--dur-2) var(--ease-out);
+  }
+  .header.is-scrolled::after { opacity: 1; }
+  .header.is-scrolled { border-bottom-color: var(--border-bright); }
+
+  /* ---- F1.3 / F1.4: page-load + scroll reveal sequence ----
+     Gated on .js-motion so content is always visible if JS/CSS is off,
+     and disabled entirely under reduce-motion. */
+  .js-motion:not(.reduce-motion) .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity var(--dur-3) var(--ease-out),
+                transform var(--dur-3) var(--ease-out);
+    will-change: opacity, transform;
+  }
+  .js-motion:not(.reduce-motion) .reveal.in-view {
+    opacity: 1;
+    transform: none;
+    will-change: auto;
+  }
+  /* Under reduce-motion the view container fade is enough; no per-card motion */
+  .reduce-motion .reveal { opacity: 1 !important; transform: none !important; }
+
+  /* Replace the whole-view slide with the staggered child reveal above */
+  .js-motion:not(.reduce-motion) .step.active { animation: none; }
+
+  /* ---- F1: comprehensive reduced-motion (main style block had almost none) ---- */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 1ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
+    /* Freeze the full-viewport background drift outright (skill §14) */
+    .bg-gradient::before { animation: none !important; }
+  }
+
+  /* ---- Materials: frostier/solid when the user reduces transparency ---- */
+  @media (prefers-reduced-transparency: reduce) {
+    .header { background: var(--surface-solid) !important; backdrop-filter: none !important; }
+    .header::after { display: none; }
+    .btn-secondary, .video-card, .header .badge { backdrop-filter: none !important; }
+  }
+</style>
+
+<script>
+/* Apple-design polish runtime — progressive enhancement only.
+   If this never runs, everything above degrades to fully-visible content. */
+(function () {
+  var docEl = document.documentElement;
+  var mqReduce = window.matchMedia
+    ? window.matchMedia('(prefers-reduced-motion: reduce)')
+    : { matches: false };
+  var reduce = !!mqReduce.matches;
+
+  docEl.classList.add('js-motion');
+  if (reduce) docEl.classList.add('reduce-motion');
+
+  // Elements that get the load/scroll reveal treatment. Section-level where a
+  // block reads as one unit; card-level for grids/feeds.
+  var REVEAL_SEL = [
+    '.feed-card', '.video-card',
+    '.pv-player-stats', '.pv-overview-stat',
+    '.pv-highlights-section', '.pv-points-section',
+    '.summary-grid > *', '.profile-card', '.sub-box',
+    '.home-feed > *'
+  ].join(',');
+
+  var io = ('IntersectionObserver' in window) ? new IntersectionObserver(function (entries) {
+    // Reveal in document order so a batch entering together (initial load,
+    // view switch) staggers top-to-bottom rather than in scattered order.
+    var vis = entries.filter(function (e) { return e.isIntersecting; });
+    vis.sort(function (a, b) {
+      return a.boundingClientRect.top - b.boundingClientRect.top;
+    });
+    vis.forEach(function (e, i) {
+      var el = e.target;
+      io.unobserve(el);
+      // Cap the stagger so a long grid doesn't crawl in.
+      var delay = Math.min(i, 8) * 55;
+      window.setTimeout(function () { el.classList.add('in-view'); }, delay);
+    });
+  }, { rootMargin: '0px 0px -6% 0px', threshold: 0.06 }) : null;
+
+  function tag(el) {
+    if (el.__revTagged) return;
+    el.__revTagged = true;
+    el.classList.add('reveal');
+    if (reduce || !io) { el.classList.add('in-view'); return; }
+    io.observe(el);
+  }
+
+  function scan(scope) {
+    var nodes = (scope || document).querySelectorAll(REVEAL_SEL);
+    for (var i = 0; i < nodes.length; i++) tag(nodes[i]);
+  }
+
+  // Initial pass once the DOM is parsed (this script sits at end of <body>).
+  scan(document);
+
+  // Content is rendered asynchronously (feed, video grid, player stats), so
+  // pick up new nodes. Debounced via rAF to stay cheap on large re-renders.
+  if (!reduce && io && 'MutationObserver' in window) {
+    var queued = false;
+    var mo = new MutationObserver(function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () { queued = false; scan(document); });
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // Safety net: never leave a tagged element stuck hidden. After the DOM has
+  // settled, force-reveal anything visible-in-viewport that IO didn't catch.
+  function safety() {
+    var els = document.querySelectorAll('.reveal:not(.in-view)');
+    var vh = window.innerHeight || 800;
+    for (var i = 0; i < els.length; i++) {
+      var r = els[i].getBoundingClientRect();
+      if (r.height > 0 && r.top < vh * 1.15) els[i].classList.add('in-view');
+    }
+  }
+  window.setTimeout(safety, 2200);
+  window.addEventListener('load', function () { window.setTimeout(safety, 400); });
+
+  // Header scroll-edge effect: fade in the mask once content scrolls under it.
+  var header = document.querySelector('.header');
+  if (header) {
+    var ticking = false;
+    var onScroll = function () {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () {
+        ticking = false;
+        header.classList.toggle('is-scrolled', (window.scrollY || 0) > 4);
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  }
+
+  // Keep behaviour honest if the user flips the OS reduced-motion setting live.
+  if (mqReduce.addEventListener) {
+    mqReduce.addEventListener('change', function (e) {
+      if (e.matches) {
+        docEl.classList.add('reduce-motion');
+        var hidden = document.querySelectorAll('.reveal:not(.in-view)');
+        for (var i = 0; i < hidden.length; i++) hidden[i].classList.add('in-view');
+      } else {
+        docEl.classList.remove('reduce-motion');
+      }
+    });
+  }
+})();
+</script>
 </body>
 </html>
