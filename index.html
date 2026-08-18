@@ -1361,8 +1361,6 @@
     border-radius: 20px;
     padding: 24px;
     backdrop-filter: blur(20px);
-    margin-top: 28px;
-    margin-bottom: 24px;
   }
   .pv-highlights-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -5094,6 +5092,8 @@
           <div id="dash-stats-body"><div class="dash-loading">Loading stats…</div></div>
         </div>
 
+        <!-- FS-0003 highlights strip: preset per-player reels, filled by renderHighlights() -->
+        <div class="pv-highlights-section" id="pv-highlights"></div>
         <div class="dash-panel dash-chat-panel" id="dash-chat-panel"></div>
       </div>
 
@@ -5109,6 +5109,9 @@
           </div>
           <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
         </div>
+        <!-- Per-person shot-quality ratios (short:long, forced:unforced,
+             closed:open) — filled by renderDashRatios() (whole-match). -->
+        <div class="dash-panel dash-ratios-panel" id="dash-ratios"></div>
         <div class="dash-shots-row">
           <div class="dash-panel">
             <div class="dash-panel-h">
@@ -5131,14 +5134,8 @@
             <div id="dash-floor-svg" class="dash-svg-host dash-svg-half"></div>
           </div>
         </div>
-        <!-- Per-person shot-quality ratios (short:long, forced:unforced,
-             closed:open) — filled by renderDashRatios() (whole-match). -->
-        <div class="dash-panel dash-ratios-panel" id="dash-ratios"></div>
       </div>
     </div>
-
-    <!-- FS-0003 highlights strip: preset per-player reels, filled by renderHighlights() -->
-    <div class="pv-highlights-section" id="pv-highlights"></div>
 
     <div class="pv-points-section">
       <div class="pv-points-header">
