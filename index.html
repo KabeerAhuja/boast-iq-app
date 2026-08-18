@@ -15615,6 +15615,17 @@ window.__autosegBridge = {
      clickable info bubbles for every stat. Additive; see AUDIT.md / handoff.
      ===================================================================== -->
 <style id="stats-info-styles">
+  /* Front wall / Floor bounce: the wide/tall diagrams were being stretched to a
+     tall panel and letterboxed into a small centred band, so the shot dots
+     looked like they floated off the diagram. Size each SVG to its natural
+     aspect and top-align it so the dots sit directly on the wall/court — the
+     diagram width is unchanged (not enlarged), the panel just stops being
+     over-tall. */
+  .dash-shots-row { align-items: start; }
+  .dash-right > .dash-shots-row { flex: 0 0 auto; }
+  .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
+  .dash-shots-row > .dash-panel > .dash-svg-host > svg { width: 100%; height: auto; }
+
   /* Per-person ratio panel under the heatmaps */
   .dash-ratios-panel { padding: 14px 16px; }
   .dash-ratios-loading { color: var(--text-dim); font-size: 12.5px; padding: 4px 0; }
