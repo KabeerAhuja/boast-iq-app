@@ -1361,6 +1361,7 @@
     border-radius: 20px;
     padding: 24px;
     backdrop-filter: blur(20px);
+    margin-top: 28px;
     margin-bottom: 24px;
   }
   .pv-highlights-header {
@@ -10289,10 +10290,13 @@ function showResults(msg) {
     }
 
     // ---- Coordinate helpers (court viewBox 640x975, wall viewBox 640x457) ----
-    const cX = m => (m / 6.4) * 640;
-    const cY = m => (m / 9.75) * 975;       // y=0 = front wall (top)
-    const wX = m => (m / 6.4) * 640;
-    const wY = m => 457 - (m / 4.57) * 457; // floor at bottom
+    // Map metres to the DRAWN court/wall interior (inset 10px, so 0..6.4m spans
+    // the outline at x=10..630) — this lines bubbles up with the walls that
+    // contain them. Out-of-court noise is clipped by the shells below.
+    const cX = m => 10 + (m / 6.4) * 620;
+    const cY = m => 10 + (m / 9.75) * 955;   // y=0 = front wall (top)
+    const wX = m => 10 + (m / 6.4) * 620;
+    const wY = m => 447 - (m / 4.57) * 437;  // floor at bottom (y=447)
 
     // Singles "egg" zone. Ellipse whose half-width grows linearly from 1.55m (front tip,
     // 3.10m from front wall) to 1.77m (back, 7.77m), centered on the 3.2m half-court line.
@@ -10340,12 +10344,15 @@ function showResults(msg) {
       return total ? Math.round((inside / total) * 100) : '–';
     }
 
+    let __shellClipSeq = 0;
     function courtShellSvg(innerHtml) {
+      const cid = 'court-clip-' + (++__shellClipSeq);
       return `
         <svg viewBox="0 0 640 975" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
           <defs>
             <radialGradient id="dash-heat-p1"><stop offset="0%" stop-color="#00f0ff" stop-opacity="0.14"/><stop offset="60%" stop-color="#00f0ff" stop-opacity="0.06"/><stop offset="100%" stop-color="#00f0ff" stop-opacity="0"/></radialGradient>
             <radialGradient id="dash-heat-p2"><stop offset="0%" stop-color="#ff2e93" stop-opacity="0.14"/><stop offset="60%" stop-color="#ff2e93" stop-opacity="0.06"/><stop offset="100%" stop-color="#ff2e93" stop-opacity="0"/></radialGradient>
+            <clipPath id="${cid}"><rect x="10" y="10" width="620" height="955"/></clipPath>
           </defs>
           <rect class="dash-court-bg" x="10" y="10" width="620" height="955"/>
           <rect class="dash-court-line" x="10" y="10" width="620" height="955"/>
@@ -10353,18 +10360,20 @@ function showResults(msg) {
           <line class="dash-court-line" x1="320" y1="544" x2="320" y2="965"/>
           <rect class="dash-court-line" x="10" y="544" width="160" height="160"/>
           <rect class="dash-court-line" x="470" y="544" width="160" height="160"/>
-          ${innerHtml || ''}
+          <g clip-path="url(#${cid})">${innerHtml || ''}</g>
         </svg>`;
     }
     function wallShellSvg(innerHtml) {
       // service line at 1.78m from floor → y=279. tin at 0.48m strip at bottom.
+      const cid = 'wall-clip-' + (++__shellClipSeq);
       return `
         <svg viewBox="0 0 640 457" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="437"/></clipPath></defs>
           <rect class="dash-court-bg" x="10" y="10" width="620" height="437"/>
           <rect class="dash-court-line" x="10" y="10" width="620" height="437"/>
           <line class="dash-court-line" x1="10" y1="279" x2="630" y2="279"/>
           <rect class="dash-tin" x="10" y="409" width="620" height="38"/>
-          ${innerHtml || ''}
+          <g clip-path="url(#${cid})">${innerHtml || ''}</g>
         </svg>`;
     }
 
@@ -10463,11 +10472,11 @@ function showResults(msg) {
         const color = key === 'p1' ? '#00f0ff' : '#ff2e93';
         if (s.front_wall_contact && s.front_wall_contact.x != null) {
           const fw = s.front_wall_contact;
-          wallParts.push(`<circle cx="${wX(fw.x).toFixed(1)}" cy="${wY(fw.y).toFixed(1)}" r="11" fill="${color}" opacity="0.82" stroke="rgba(0,0,0,0.4)" stroke-width="1.5"/>`);
+          wallParts.push(`<circle cx="${wX(fw.x).toFixed(1)}" cy="${wY(fw.y).toFixed(1)}" r="8" fill="${color}" opacity="0.82" stroke="rgba(0,0,0,0.4)" stroke-width="1.2"/>`);
         }
         if (s.floor_bounce && s.floor_bounce.x != null) {
           const fb = s.floor_bounce;
-          floorParts.push(`<circle cx="${cX(fb.x).toFixed(1)}" cy="${cY(fb.y).toFixed(1)}" r="11" fill="${color}" opacity="0.82" stroke="rgba(0,0,0,0.4)" stroke-width="1.5"/>`);
+          floorParts.push(`<circle cx="${cX(fb.x).toFixed(1)}" cy="${cY(fb.y).toFixed(1)}" r="8" fill="${color}" opacity="0.82" stroke="rgba(0,0,0,0.4)" stroke-width="1.2"/>`);
         }
       }));
       wallHost.innerHTML = wallShellSvg(wallParts.join(''));
@@ -10569,7 +10578,7 @@ function showResults(msg) {
         // faint; the shot just played is emphasised with a glow.
         const upcoming = dt < -0.05;
         const recent = dt >= 0 && dt < 0.6;
-        const r = recent ? 18 : (upcoming ? 9 : 12);
+        const r = recent ? 13 : (upcoming ? 7 : 9);
         const op = upcoming ? 0.32 : 0.9;
         const shadow = recent ? `filter="drop-shadow(0 0 12px ${color})"` : '';
         if (s.front_wall_contact && s.front_wall_contact.x != null) {
@@ -10865,15 +10874,16 @@ function showResults(msg) {
         // Grade replaces Duration (per request). Provisional placeholder until
         // lane 6 (shot grading) ships — see shotGrade().
         card('Grade', dual(shotGrade(scope, 'p1'), shotGrade(scope, 'p2')), 'grade'),
-        card('Total shots', one(s.totalShots), 'totalshots'),
-        card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration), 'rally'),
-        card('Distance', dual(s.distP1, s.distP2), 'distance'),
+        card('Total shots', one(s.totalShots)),
+        card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
+        card('Distance', dual(s.distP1, s.distP2)),
         // Shot-type counts (per player). Point scope from this rally's `type`
-        // labels; match scope from the backend match_summary.
-        card('Drives', dual(cnt(s.drives).p1, cnt(s.drives).p2), 'drives'),
-        card('Cross courts', dual(cnt(s.crossCourts).p1, cnt(s.crossCourts).p2), 'crosscourts'),
-        card('Volleys', dual(cnt(s.volleys).p1, cnt(s.volleys).p2), 'volleys'),
-        card('Drops', dual(cnt(s.drops).p1, cnt(s.drops).p2), 'drops'),
+        // labels; match scope from the backend match_summary. Self-explanatory,
+        // so no info bubble.
+        card('Drives', dual(cnt(s.drives).p1, cnt(s.drives).p2)),
+        card('Cross courts', dual(cnt(s.crossCourts).p1, cnt(s.crossCourts).p2)),
+        card('Volleys', dual(cnt(s.volleys).p1, cnt(s.volleys).p2)),
+        card('Drops', dual(cnt(s.drops).p1, cnt(s.drops).p2)),
         ...insightCards,
       ].join('')}</div>`;
     }
@@ -15669,17 +15679,10 @@ window.__autosegBridge = {
 (function () {
   // Short "what it is / how it's calculated" copy, keyed by data-info.
   var STAT_INFO = {
-    pressure:   { t: 'Pressure', d: 'How hard a player was made to work (0–100), from their own movement. Higher = under more pressure.' },
-    egg:        { t: 'Egg time', d: 'Share of the rally spent in the “egg” — the ideal area around the T. Higher % = better court position.' },
-    recovery:   { t: 'Recovery time', d: 'Average time taken to move back toward the T after hitting. Lower = quicker recovery.' },
+    pressure:   { t: 'Pressure', d: 'How hard a player was made to work, from their own movement. Higher = under more pressure.' },
+    egg:        { t: 'Egg time', d: 'Amount of time per rally spent near the T. Higher % = better court position.' },
+    recovery:   { t: 'Recovery time', d: 'How well a player got back toward the T after their shots. Higher = better recovery.' },
     grade:      { t: 'Grade', d: 'Overall shot quality for each player. Provisional placeholder — real shot-grading is coming soon.' },
-    totalshots: { t: 'Total shots', d: 'Count of shots struck — this rally (Current point) or the whole game (Full match).' },
-    rally:      { t: 'Rally length', d: 'Current point: this rally’s duration. Full match: the average rally duration.' },
-    distance:   { t: 'Distance', d: 'Metres each player moved, measured from the 5 Hz movement track.' },
-    drives:     { t: 'Drives', d: 'Straight drives hit by each player (shot type = drive).' },
-    crosscourts:{ t: 'Cross courts', d: 'Cross-court shots — the ball crosses to the opposite side of the court (shot type = cross court).' },
-    volleys:    { t: 'Volleys', d: 'Balls struck out of the air before bouncing (shot type = volley).' },
-    drops:      { t: 'Drops', d: 'Drop shots played softly into the front (shot type = drop).' },
     shortlong:  { t: 'Short : long', d: 'Ratio of shots landing short (front third, ≤ 4.26 m from the front wall) to long (back). Whole match.' },
     forced:     { t: 'Forced : unforced errors', d: 'Rally-ending errors by the point loser, split by whether they were under pressure (forced) or not (unforced). Whole match, first-pass.' },
     closedopen: { t: 'Closed : open', d: 'Straight (closed) vs cross-court (open) shots — the ratio of drives to cross-courts. Whole match.' },
