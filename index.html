@@ -5130,6 +5130,9 @@
             <div id="dash-floor-svg" class="dash-svg-host dash-svg-half"></div>
           </div>
         </div>
+        <!-- Per-person shot-quality ratios (short:long, forced:unforced,
+             closed:open) — filled by renderDashRatios() (whole-match). -->
+        <div class="dash-panel dash-ratios-panel" id="dash-ratios"></div>
       </div>
     </div>
 
@@ -10561,26 +10564,73 @@ function showResults(msg) {
         const color = key === 'p1' ? '#00f0ff' : '#ff2e93';
         const hitT = (typeof s.hit_time_sec === 'number') ? s.hit_time_sec : -Infinity;
         const dt = tCur - hitT;
-        if (dt < -0.05) continue;
+        // Always draw every shot of the current point so the panels are never
+        // empty when paused. Upcoming shots (before the video reaches them) are
+        // faint; the shot just played is emphasised with a glow.
+        const upcoming = dt < -0.05;
         const recent = dt >= 0 && dt < 0.6;
-        const r = recent ? 18 : 12;
+        const r = recent ? 18 : (upcoming ? 9 : 12);
+        const op = upcoming ? 0.32 : 0.9;
         const shadow = recent ? `filter="drop-shadow(0 0 12px ${color})"` : '';
         if (s.front_wall_contact && s.front_wall_contact.x != null) {
           const fw = s.front_wall_contact;
-          wallParts.push(`<circle cx="${wX(fw.x).toFixed(1)}" cy="${wY(fw.y).toFixed(1)}" r="${r}" fill="${color}" opacity="0.9" stroke="rgba(0,0,0,0.4)" stroke-width="1.5" ${shadow}/>`);
+          wallParts.push(`<circle cx="${wX(fw.x).toFixed(1)}" cy="${wY(fw.y).toFixed(1)}" r="${r}" fill="${color}" opacity="${op}" stroke="rgba(0,0,0,0.4)" stroke-width="1.5" ${shadow}/>`);
         }
         if (s.floor_bounce && s.floor_bounce.x != null) {
           const fb = s.floor_bounce;
-          floorParts.push(`<circle cx="${cX(fb.x).toFixed(1)}" cy="${cY(fb.y).toFixed(1)}" r="${r}" fill="${color}" opacity="0.9" stroke="rgba(0,0,0,0.4)" stroke-width="1.5" ${shadow}/>`);
+          floorParts.push(`<circle cx="${cX(fb.x).toFixed(1)}" cy="${cY(fb.y).toFixed(1)}" r="${r}" fill="${color}" opacity="${op}" stroke="rgba(0,0,0,0.4)" stroke-width="1.5" ${shadow}/>`);
         }
       }
       wallHost.innerHTML = wallShellSvg(wallParts.join(''));
       floorHost.innerHTML = courtShellSvg(floorParts.join(''));
     }
 
+    // Per-person ratio panel under the heatmaps: short:long, forced:unforced,
+    // closed:open. Whole-match figures (see the scope note in the info bubble);
+    // populated once all rallies are aggregated.
+    function renderDashRatios() {
+      const host = document.getElementById('dash-ratios');
+      if (!host) return;
+      const r = dashState.matchRatios;
+      // Match-level + static: render once per data object (renderDashAll runs
+      // every animation frame, so avoid rebuilding — it would also fight an
+      // open info popover).
+      if (host.__ratiosSrc === (r || 'loading')) return;
+      host.__ratiosSrc = (r || 'loading');
+      if (!r) { host.innerHTML = `<div class="dash-ratios-loading">Aggregating shot ratios…</div>`; return; }
+      const ratio = (a, b) => {
+        a = a || 0; b = b || 0;
+        if (!a && !b) return '—';
+        return b === 0 ? `${a}:0` : `${(a / b).toFixed(2)}`;
+      };
+      const pair = (a, b) => `${a || 0} : ${b || 0}`;
+      const info = (key) => `<button type="button" class="stat-info" data-info="${key}" aria-label="What is this stat?">i</button>`;
+      const rowFor = (label, key, p1Main, p1Sub, p2Main, p2Sub) => `
+        <div class="dash-ratio-row">
+          <div class="dash-ratio-label">${label}${info(key)}</div>
+          <div class="dash-ratio-vals">
+            <div class="dash-ratio-val"><span class="dash-dot dash-dot-p1"></span><b>${p1Main}</b><span class="dash-ratio-sub">${p1Sub}</span></div>
+            <div class="dash-ratio-val"><span class="dash-dot dash-dot-p2"></span><b>${p2Main}</b><span class="dash-ratio-sub">${p2Sub}</span></div>
+          </div>
+        </div>`;
+      const sl = r.shortLong, er = r.errors, co = r.closedOpen;
+      host.innerHTML = `
+        <div class="dash-panel-h"><div class="dash-panel-title">Shot quality — whole match</div></div>
+        ${rowFor('Short : long', 'shortlong',
+          ratio(sl.p1.short, sl.p1.long), pair(sl.p1.short, sl.p1.long),
+          ratio(sl.p2.short, sl.p2.long), pair(sl.p2.short, sl.p2.long))}
+        ${rowFor('Forced : unforced errors', 'forced',
+          pair(er.p1.forced, er.p1.unforced), `${(er.p1.forced||0)+(er.p1.unforced||0)} errors`,
+          pair(er.p2.forced, er.p2.unforced), `${(er.p2.forced||0)+(er.p2.unforced||0)} errors`)}
+        ${rowFor('Closed : open', 'closedopen',
+          ratio(co.p1.closed, co.p1.open), pair(co.p1.closed, co.p1.open),
+          ratio(co.p2.closed, co.p2.open), pair(co.p2.closed, co.p2.open))}`;
+    }
+
     function renderDashAll() {
       try { renderDashHeatmap(); } catch (e) { console.warn('heatmap render failed', e); }
       try { renderDashShots(); } catch (e) { console.warn('shots render failed', e); }
+      try { renderDashRatios(); } catch (e) { console.warn('ratios render failed', e); }
     }
     function scheduleDashRender() {
       if (dashState.rafPending) return;
@@ -10604,6 +10654,89 @@ function showResults(msg) {
     function startDashLoop() { stopDashLoop(); dashRafId = requestAnimationFrame(dashTick); }
     function stopDashLoop() { if (dashRafId != null) { cancelAnimationFrame(dashRafId); dashRafId = null; } }
 
+    // ====================================================================
+    // Advanced shot-stat helpers (frontend, geometry-based — mirror the
+    // backend stats_engine constants). Used by the stat cards + the
+    // per-person ratio panel under the heatmaps.
+    // ====================================================================
+    const SHORT_MAX_Y = 4.26;        // floor bounce Y <= this = "short" (front third)
+    const PRESSURE_FORCED_THRESH = 50; // point pressure ON a player >= this => forced
+
+    // Normalise a shot's class. Current pipeline writes `type`
+    // (drive/cross court/volley/drop/boast/kill/serve); older games wrote
+    // `shot_class`. Prefer `type`.
+    function shotClassOf(shot) {
+      const t = shot && (shot.type != null ? shot.type : shot.shot_class);
+      return typeof t === 'string' ? t.toLowerCase() : null;
+    }
+
+    // Short : long — by floor-bounce depth. Short = lands in the front
+    // (Y <= SHORT_MAX_Y), long = lands in the back. Serves excluded.
+    function shortLongCounts(rally) {
+      const t = { player_1: { short: 0, long: 0 }, player_2: { short: 0, long: 0 } };
+      (rally || []).forEach(s => {
+        if (shotClassOf(s) === 'serve') return;
+        const who = s.hit_by;
+        if (who !== 'player_1' && who !== 'player_2') return;
+        const fb = s.floor_bounce;
+        if (!fb || fb.y == null) return;
+        t[who][fb.y <= SHORT_MAX_Y ? 'short' : 'long']++;
+      });
+      return { p1: t.player_1, p2: t.player_2 };
+    }
+
+    // Forced vs unforced errors across a set of loaded rallies. An error is the
+    // rally-ending shot hit by the point LOSER (needs outcome.winner). First
+    // pass: forced when the pressure ON the error-maker that point (their own
+    // pressureP1/P2, "how hard they were made to work") >= threshold.
+    function forcedUnforcedErrors(rallies, movementPerPoint) {
+      const byPoint = {};
+      (movementPerPoint || []).forEach(e => { if (e && e.point_number != null) byPoint[e.point_number] = e; });
+      const t = { player_1: { forced: 0, unforced: 0 }, player_2: { forced: 0, unforced: 0 } };
+      (rallies || []).forEach(rd => {
+        const winner = (rd && rd.outcome && rd.outcome.winner) || null;
+        if (winner !== 'player_1' && winner !== 'player_2') return;
+        const rally = rd.rally || [];
+        if (!rally.length) return;
+        const last = rally[rally.length - 1];
+        const ender = last && last.hit_by;
+        if (ender !== 'player_1' && ender !== 'player_2') return;
+        if (ender === winner) return;           // rally-ending winner, not an error
+        const mp = byPoint[rd.point_number] || {};
+        const facing = ender === 'player_1' ? mp.pressureP1 : mp.pressureP2;
+        const forced = facing != null && facing >= PRESSURE_FORCED_THRESH;
+        t[ender][forced ? 'forced' : 'unforced']++;
+      });
+      return { p1: t.player_1, p2: t.player_2 };
+    }
+
+    // Match-level ratio bundle for the per-person panel under the heatmaps.
+    // Closed:open == straight (drive) : cross-court, per the backend label-first
+    // definition, so we reuse the shot-type counts.
+    function computeMatchRatios(rallies, movementPerPoint, counts) {
+      let sl = { p1: { short: 0, long: 0 }, p2: { short: 0, long: 0 } };
+      (rallies || []).forEach(rd => {
+        const c = shortLongCounts(rd.rally || []);
+        sl.p1.short += c.p1.short; sl.p1.long += c.p1.long;
+        sl.p2.short += c.p2.short; sl.p2.long += c.p2.long;
+      });
+      const err = forcedUnforcedErrors(rallies, movementPerPoint);
+      const closedOpen = {
+        p1: { closed: (counts.drives || {}).p1 || 0, open: (counts.crossCourts || {}).p1 || 0 },
+        p2: { closed: (counts.drives || {}).p2 || 0, open: (counts.crossCourts || {}).p2 || 0 },
+      };
+      return { shortLong: sl, errors: err, closedOpen };
+    }
+
+    // Grade of shots — PLACEHOLDER. Lane 6 (shot grading) is still in flight;
+    // it will supply the real per-player grade. Until then this returns an
+    // arbitrary provisional value so the card + layout are in place.
+    // TODO(lane 6 — shot grading): replace with the real grade source.
+    const SHOT_GRADE_PLACEHOLDER = { p1: '7.8', p2: '8.1' };
+    function shotGrade(scope, playerKey) {
+      return SHOT_GRADE_PLACEHOLDER[playerKey] != null ? SHOT_GRADE_PLACEHOLDER[playerKey] : '—';
+    }
+
     function buildPointStats(pt) {
       if (!pt) return null;
       const rally = pt.rally || [];
@@ -10621,9 +10754,13 @@ function showResults(msg) {
         }
         return total;
       };
+      // Shot classification: current pipeline writes `type`; older games wrote
+      // `shot_class`. Read `type` first so drive/cross-court/volley/drop counts
+      // aren't silently zero on new games (where shot_class is null).
       const classOf = (player, cls) =>
-        rally.filter(s => s.hit_by === player && s.shot_class === cls).length;
+        rally.filter(s => s.hit_by === player && shotClassOf(s) === cls).length;
       const eggOf = (player) => { const c = eggCounts(pt, player); return eggScore(c.inside, c.total); };
+      const sl = shortLongCounts(rally);
       return {
         duration: `${(pt.duration_sec || 0).toFixed(1)} s`,
         totalShots: rally.length,
@@ -10632,9 +10769,11 @@ function showResults(msg) {
         distP2: `${dist('player_2').toFixed(1)} m`,
         eggTime: { p1: eggOf('player_1'), p2: eggOf('player_2') },
         drives:  { p1: classOf('player_1', 'drive'),  p2: classOf('player_2', 'drive') },
+        crossCourts: { p1: classOf('player_1', 'cross court'), p2: classOf('player_2', 'cross court') },
         drops:   { p1: classOf('player_1', 'drop'),   p2: classOf('player_2', 'drop') },
         boasts:  { p1: classOf('player_1', 'boast'),  p2: classOf('player_2', 'boast') },
         volleys: { p1: classOf('player_1', 'volley'), p2: classOf('player_2', 'volley') },
+        shortLong: sl,
       };
     }
 
@@ -10683,7 +10822,11 @@ function showResults(msg) {
         s = dashState.matchAggregates;
       }
 
-      const card = (l, b) => `<div class="dash-stat-card"><div class="dash-stat-label">${l}</div>${b}</div>`;
+      // Optional info bubble (ⓘ) — click shows a short "what/how" popover
+      // (see STAT_INFO + the delegated handler).
+      const info = (key) => key ? `<button type="button" class="stat-info" data-info="${key}" aria-label="What is this stat?">i</button>` : '';
+      const card = (l, b, key) => `<div class="dash-stat-card"><div class="dash-stat-label">${l}${info(key)}</div>${b}</div>`;
+      const cnt = (o) => o || { p1: 0, p2: 0 };
       const dual = (a, b) => `
         <div class="dash-stat-rows">
           <div class="dash-stat-row"><span class="dash-stat-name"><span class="dash-dot dash-dot-p1"></span>${dashState.p1Name}</span><span class="dash-stat-value">${a}</span></div>
@@ -10699,10 +10842,10 @@ function showResults(msg) {
       const pcardBody = (name, dotClass, val) =>
         `<div class="dash-stat-row" style="margin-bottom:8px"><span class="dash-stat-name"><span class="dash-dot ${dotClass}"></span>${name}</span></div><div class="dash-stat-value-big">${val}</div>`;
       const movementCards = (s.pressureP1 == null && s.pressureP2 == null) ? [] : [
-        card('Pressure', pcardBody(dashState.p1Name, 'dash-dot-p1', pv(s.pressureP1))),
-        card('Pressure', pcardBody(dashState.p2Name, 'dash-dot-p2', pv(s.pressureP2))),
-        card('Egg time', dual(eggFmt(s.eggTimeP1), eggFmt(s.eggTimeP2))),
-        card('Recovery time', dual(recFmt(s.recoveryP1), recFmt(s.recoveryP2))),
+        card('Pressure', pcardBody(dashState.p1Name, 'dash-dot-p1', pv(s.pressureP1)), 'pressure'),
+        card('Pressure', pcardBody(dashState.p2Name, 'dash-dot-p2', pv(s.pressureP2)), 'pressure'),
+        card('Egg time', dual(eggFmt(s.eggTimeP1), eggFmt(s.eggTimeP2)), 'egg'),
+        card('Recovery time', dual(recFmt(s.recoveryP1), recFmt(s.recoveryP2)), 'recovery'),
       ];
       // AI insight cards (match scope only), full-width under the stat grid:
       // whole-MATCH summary (parent-level match_insights.json, spans all games
@@ -10719,10 +10862,18 @@ function showResults(msg) {
       ];
       body.innerHTML = `<div class="dash-stats-grid">${[
         ...movementCards,
-        card('Duration', one(s.duration)),
-        card('Total shots', one(s.totalShots)),
-        card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
-        card('Distance', dual(s.distP1, s.distP2)),
+        // Grade replaces Duration (per request). Provisional placeholder until
+        // lane 6 (shot grading) ships — see shotGrade().
+        card('Grade', dual(shotGrade(scope, 'p1'), shotGrade(scope, 'p2')), 'grade'),
+        card('Total shots', one(s.totalShots), 'totalshots'),
+        card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration), 'rally'),
+        card('Distance', dual(s.distP1, s.distP2), 'distance'),
+        // Shot-type counts (per player). Point scope from this rally's `type`
+        // labels; match scope from the backend match_summary.
+        card('Drives', dual(cnt(s.drives).p1, cnt(s.drives).p2), 'drives'),
+        card('Cross courts', dual(cnt(s.crossCourts).p1, cnt(s.crossCourts).p2), 'crosscourts'),
+        card('Volleys', dual(cnt(s.volleys).p1, cnt(s.volleys).p2), 'volleys'),
+        card('Drops', dual(cnt(s.drops).p1, cnt(s.drops).p2), 'drops'),
         ...insightCards,
       ].join('')}</div>`;
     }
@@ -10801,7 +10952,8 @@ function showResults(msg) {
           (rd.rally || []).forEach(shot => {
             const k = shot.hit_by === 'player_1' ? 'p1' : 'p2';
             if (k === 'p1') p1Shots++; else p2Shots++;
-            if (shot.shot_class && cls[k][shot.shot_class] != null) cls[k][shot.shot_class]++;
+            const sc = shotClassOf(shot);
+            if (sc && cls[k][sc] != null) cls[k][sc]++;
           });
           const d1 = movementDistance(rd, 'player_1');
           const d2 = movementDistance(rd, 'player_2');
@@ -10811,6 +10963,22 @@ function showResults(msg) {
           const e2 = eggCounts(rd, 'player_2'); p2EggIn += e2.inside; p2EggTot += e2.total;
         });
 
+        // Prefer the backend-computed match_summary shot counts (they include
+        // cross courts and are correct on new games); fall back to our own tally.
+        const ms = indexData.match_summary || {};
+        const msCount = (k, fb) => (ms[k] && ms[k].p1 != null) ? ms[k] : fb;
+        const aggDrives = msCount('drives', { p1: cls.p1.drive, p2: cls.p2.drive });
+        const aggCross  = msCount('crossCourts', { p1: 0, p2: 0 });
+        const aggDrops  = msCount('drops', { p1: cls.p1.drop, p2: cls.p2.drop });
+        const aggVolleys = msCount('volleys', { p1: cls.p1.volley, p2: cls.p2.volley });
+        const aggBoasts = msCount('boasts', { p1: cls.p1.boast, p2: cls.p2.boast });
+
+        // Per-person ratio bundle for the panel under the heatmaps (match-level).
+        dashState.matchRatios = computeMatchRatios(
+          allRallies, dashState.movementPerPoint,
+          { drives: aggDrives, crossCourts: aggCross }
+        );
+
         dashState.matchAggregates = {
           duration: formatTime(totalDur),
           totalShots: p1Shots + p2Shots,
@@ -10818,10 +10986,11 @@ function showResults(msg) {
           distP1: `${p1Dist.toFixed(0)} m`,
           distP2: `${p2Dist.toFixed(0)} m`,
           eggTime: { p1: eggScore(p1EggIn, p1EggTot), p2: eggScore(p2EggIn, p2EggTot) },
-          drives:  { p1: cls.p1.drive,  p2: cls.p2.drive },
-          drops:   { p1: cls.p1.drop,   p2: cls.p2.drop },
-          boasts:  { p1: cls.p1.boast,  p2: cls.p2.boast },
-          volleys: { p1: cls.p1.volley, p2: cls.p2.volley },
+          drives:  aggDrives,
+          crossCourts: aggCross,
+          drops:   aggDrops,
+          boasts:  aggBoasts,
+          volleys: aggVolleys,
           // Movement stats (Pressure / Egg time / Recovery) come from the backend
           // match_summary (pipeline-computed / backfilled) — not recomputed here.
           pressureP1: (indexData.match_summary || {}).pressureP1,
@@ -10837,6 +11006,10 @@ function showResults(msg) {
           tendencyP2: (indexData.match_summary || {}).tendencyP2,
         };
         if (dashState.scope === 'match') { renderStatsPanel('match'); renderDashAll(); }
+        // The per-person ratio panel is whole-match + shown in every scope, so
+        // paint it as soon as the aggregates land (point scope never calls
+        // renderDashAll here otherwise).
+        try { renderDashRatios(); } catch (_) {}
 
         // Phase 4: cache aggregates on the video doc so the Coach Dashboard
         // can sum them across student matches without re-fetching every point JSON.
@@ -15424,6 +15597,144 @@ window.__autosegBridge = {
       }
     });
   }
+})();
+</script>
+
+<!-- =====================================================================
+     Phase 2 — advanced shot stats: per-person ratio panel styling +
+     clickable info bubbles for every stat. Additive; see AUDIT.md / handoff.
+     ===================================================================== -->
+<style id="stats-info-styles">
+  /* Per-person ratio panel under the heatmaps */
+  .dash-ratios-panel { padding: 14px 16px; }
+  .dash-ratios-loading { color: var(--text-dim); font-size: 12.5px; padding: 4px 0; }
+  .dash-ratios-panel .dash-panel-h { margin-bottom: 10px; }
+  .dash-ratio-row { padding: 9px 0; border-top: 1px solid var(--border); }
+  .dash-ratio-row:first-of-type { border-top: 0; }
+  .dash-ratio-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-dim); margin-bottom: 7px;
+  }
+  .dash-ratio-vals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dash-ratio-val { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .dash-ratio-val .dash-dot { align-self: center; flex: none; }
+  .dash-ratio-val b {
+    font-family: 'Space Grotesk', sans-serif; font-size: 17px; font-weight: 700;
+    letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums;
+  }
+  .dash-ratio-sub { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+
+  /* Info bubble (ⓘ) trigger */
+  .stat-info {
+    -webkit-appearance: none; appearance: none;
+    width: 15px; height: 15px; padding: 0; margin-left: 6px;
+    vertical-align: middle; flex: none;
+    display: inline-grid; place-items: center;
+    border-radius: 50%; border: 1px solid var(--border-bright);
+    background: transparent; color: var(--text-dim);
+    font: italic 700 10px/1 Georgia, 'Times New Roman', serif;
+    cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s, transform var(--dur-press, 110ms) var(--ease-out, ease);
+  }
+  .stat-info:hover { color: var(--text); border-color: var(--text-dim); }
+  .js-motion .stat-info:active { transform: scale(0.88); }
+  .stat-info.is-open { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+  .stat-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Shared floating popover */
+  #stat-info-pop {
+    position: fixed; z-index: 10000; max-width: 244px;
+    background: var(--surface-solid, #15151b); color: var(--text, #f0f0f5);
+    border: 1px solid var(--border-bright, rgba(255,255,255,0.15));
+    border-radius: 12px; padding: 10px 12px;
+    font: 500 12px/1.45 'Inter', system-ui, sans-serif;
+    box-shadow: 0 14px 36px rgba(0,0,0,0.5);
+    opacity: 0; transform: translateY(4px) scale(0.98); pointer-events: none;
+    transition: opacity .16s var(--ease-out, ease), transform .16s var(--ease-out, ease);
+  }
+  #stat-info-pop.is-open { opacity: 1; transform: none; pointer-events: auto; }
+  #stat-info-pop .sip-title {
+    font-weight: 700; letter-spacing: -0.01em; margin-bottom: 3px; color: var(--text);
+  }
+  #stat-info-pop .sip-body { color: var(--text-dim); }
+  @media (prefers-reduced-motion: reduce) {
+    #stat-info-pop { transition: opacity .12s; transform: none !important; }
+  }
+</style>
+
+<script>
+/* Stat info bubbles — one shared popover, delegated clicks. Progressive:
+   if this never runs, the ⓘ buttons are simply inert. */
+(function () {
+  // Short "what it is / how it's calculated" copy, keyed by data-info.
+  var STAT_INFO = {
+    pressure:   { t: 'Pressure', d: 'How hard a player was made to work (0–100), from their own movement. Higher = under more pressure.' },
+    egg:        { t: 'Egg time', d: 'Share of the rally spent in the “egg” — the ideal area around the T. Higher % = better court position.' },
+    recovery:   { t: 'Recovery time', d: 'Average time taken to move back toward the T after hitting. Lower = quicker recovery.' },
+    grade:      { t: 'Grade', d: 'Overall shot quality for each player. Provisional placeholder — real shot-grading is coming soon.' },
+    totalshots: { t: 'Total shots', d: 'Count of shots struck — this rally (Current point) or the whole game (Full match).' },
+    rally:      { t: 'Rally length', d: 'Current point: this rally’s duration. Full match: the average rally duration.' },
+    distance:   { t: 'Distance', d: 'Metres each player moved, measured from the 5 Hz movement track.' },
+    drives:     { t: 'Drives', d: 'Straight drives hit by each player (shot type = drive).' },
+    crosscourts:{ t: 'Cross courts', d: 'Cross-court shots — the ball crosses to the opposite side of the court (shot type = cross court).' },
+    volleys:    { t: 'Volleys', d: 'Balls struck out of the air before bouncing (shot type = volley).' },
+    drops:      { t: 'Drops', d: 'Drop shots played softly into the front (shot type = drop).' },
+    shortlong:  { t: 'Short : long', d: 'Ratio of shots landing short (front third, ≤ 4.26 m from the front wall) to long (back). Whole match.' },
+    forced:     { t: 'Forced : unforced errors', d: 'Rally-ending errors by the point loser, split by whether they were under pressure (forced) or not (unforced). Whole match, first-pass.' },
+    closedopen: { t: 'Closed : open', d: 'Straight (closed) vs cross-court (open) shots — the ratio of drives to cross-courts. Whole match.' },
+  };
+
+  var pop = null, openBtn = null;
+  function ensurePop() {
+    if (pop) return pop;
+    pop = document.createElement('div');
+    pop.id = 'stat-info-pop';
+    pop.setAttribute('role', 'tooltip');
+    document.body.appendChild(pop);
+    return pop;
+  }
+  function place(btn) {
+    var r = btn.getBoundingClientRect();
+    var pr = pop.getBoundingClientRect();
+    var left = r.left + r.width / 2 - pr.width / 2;
+    var top = r.bottom + 8;
+    left = Math.max(8, Math.min(left, window.innerWidth - pr.width - 8));
+    if (top + pr.height > window.innerHeight - 8) top = r.top - pr.height - 8;
+    pop.style.left = Math.round(left) + 'px';
+    pop.style.top = Math.round(Math.max(8, top)) + 'px';
+  }
+  function closePop() {
+    if (!pop) return;
+    pop.classList.remove('is-open');
+    if (openBtn) { openBtn.classList.remove('is-open'); openBtn.setAttribute('aria-expanded', 'false'); }
+    openBtn = null;
+  }
+  function openPop(btn) {
+    var d = STAT_INFO[btn.dataset.info];
+    if (!d) return;
+    ensurePop();
+    pop.innerHTML = '<div class="sip-title"></div><div class="sip-body"></div>';
+    pop.querySelector('.sip-title').textContent = d.t;
+    pop.querySelector('.sip-body').textContent = d.d;
+    pop.classList.add('is-open');
+    btn.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+    openBtn = btn;
+    place(btn);
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.stat-info');
+    if (btn) {
+      e.preventDefault(); e.stopPropagation();
+      if (openBtn === btn) closePop(); else { closePop(); openPop(btn); }
+      return;
+    }
+    if (pop && pop.classList.contains('is-open') && !(e.target.closest && e.target.closest('#stat-info-pop'))) closePop();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
+  window.addEventListener('scroll', function () { if (openBtn) place(openBtn); }, true);
+  window.addEventListener('resize', closePop);
 })();
 </script>
 </body>
