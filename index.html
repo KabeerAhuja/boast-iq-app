@@ -5098,17 +5098,6 @@
       </div>
 
       <div class="dash-right">
-        <div class="dash-panel">
-          <div class="dash-panel-h">
-            <div class="dash-panel-title">Player heatmap</div>
-            <div class="dash-shot-filter">
-              <label><input type="checkbox" class="dash-filter-p1" checked><span class="dash-dot dash-dot-p1"></span><span class="dash-fname-p1">You</span></label>
-              <label><input type="checkbox" class="dash-filter-p2" checked><span class="dash-dot dash-dot-p2"></span><span class="dash-fname-p2">Opp</span></label>
-              <label><input type="checkbox" id="dash-filter-egg" checked><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
-            </div>
-          </div>
-          <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
-        </div>
         <!-- Per-person shot-quality ratios (short:long, forced:unforced,
              closed:open) — filled by renderDashRatios() (whole-match). -->
         <div class="dash-panel dash-ratios-panel" id="dash-ratios"></div>
@@ -5133,6 +5122,17 @@
             </div>
             <div id="dash-floor-svg" class="dash-svg-host dash-svg-half"></div>
           </div>
+        </div>
+        <div class="dash-panel">
+          <div class="dash-panel-h">
+            <div class="dash-panel-title">Player heatmap</div>
+            <div class="dash-shot-filter">
+              <label><input type="checkbox" class="dash-filter-p1" checked><span class="dash-dot dash-dot-p1"></span><span class="dash-fname-p1">You</span></label>
+              <label><input type="checkbox" class="dash-filter-p2" checked><span class="dash-dot dash-dot-p2"></span><span class="dash-fname-p2">Opp</span></label>
+              <label><input type="checkbox" id="dash-filter-egg" checked><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
+            </div>
+          </div>
+          <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
         </div>
       </div>
     </div>
@@ -15615,12 +15615,24 @@ window.__autosegBridge = {
      clickable info bubbles for every stat. Additive; see AUDIT.md / handoff.
      ===================================================================== -->
 <style id="stats-info-styles">
+  /* Panels ("bubbles") hug their content instead of stretching to fill the
+     column. Let the two columns size independently, and stop the right-column
+     panels / SVGs from growing. */
+  .dashboard { align-items: start; }
+  .dash-right > .dash-panel,
+  .dash-right > .dash-panel:first-child,
+  .dash-right > .dash-shots-row { flex: 0 0 auto; }
+
+  /* Player heatmap: natural aspect, top-aligned (was stretched, leaving a gap
+     of empty space below the court). */
+  #dash-heatmap-svg { flex: 0 0 auto; align-items: flex-start; }
+  #dash-heatmap-svg > svg { width: 100%; height: auto; }
+
   /* Front wall / Floor bounce: size each SVG to its natural aspect and
      top-align it so the shot dots sit directly on the diagram (no letterbox).
-     Both shells now use the same 640×975 viewBox, so the two panels render the
-     same height and end level — with round (undistorted) dots. */
+     Both shells use the same 640×975 viewBox, so the two panels render the same
+     height and end level — with round (undistorted) dots. */
   .dash-shots-row { align-items: start; }
-  .dash-right > .dash-shots-row { flex: 0 0 auto; }
   .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
   .dash-shots-row > .dash-panel > .dash-svg-host > svg { width: 100%; height: auto; }
 
