@@ -10296,7 +10296,7 @@ function showResults(msg) {
     const cX = m => 10 + (m / 6.4) * 620;
     const cY = m => 10 + (m / 9.75) * 955;   // y=0 = front wall (top)
     const wX = m => 10 + (m / 6.4) * 620;
-    const wY = m => 447 - (m / 4.57) * 437;  // floor at bottom (y=447)
+    const wY = m => 965 - (m / 4.57) * 955;  // floor at bottom (y=965), wall drawn in the 640×975 viewBox
 
     // Singles "egg" zone. Ellipse whose half-width grows linearly from 1.55m (front tip,
     // 3.10m from front wall) to 1.77m (back, 7.77m), centered on the 3.2m half-court line.
@@ -10364,15 +10364,18 @@ function showResults(msg) {
         </svg>`;
     }
     function wallShellSvg(innerHtml) {
-      // service line at 1.78m from floor → y=279. tin at 0.48m strip at bottom.
+      // Uses the SAME 640×975 viewBox as the floor court so the two panels
+      // render the same height and end level (with round dots). The 4.57 m wall
+      // is drawn stretched to fill that height; the outline is x=10..630,
+      // y=10..965. service line 1.78 m from floor → y=593; tin 0.48 m strip.
       const cid = 'wall-clip-' + (++__shellClipSeq);
       return `
-        <svg viewBox="0 0 640 457" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="437"/></clipPath></defs>
-          <rect class="dash-court-bg" x="10" y="10" width="620" height="437"/>
-          <rect class="dash-court-line" x="10" y="10" width="620" height="437"/>
-          <line class="dash-court-line" x1="10" y1="279" x2="630" y2="279"/>
-          <rect class="dash-tin" x="10" y="409" width="620" height="38"/>
+        <svg viewBox="0 0 640 975" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="955"/></clipPath></defs>
+          <rect class="dash-court-bg" x="10" y="10" width="620" height="955"/>
+          <rect class="dash-court-line" x="10" y="10" width="620" height="955"/>
+          <line class="dash-court-line" x1="10" y1="593" x2="630" y2="593"/>
+          <rect class="dash-tin" x="10" y="865" width="620" height="100"/>
           <g clip-path="url(#${cid})">${innerHtml || ''}</g>
         </svg>`;
     }
@@ -15615,12 +15618,10 @@ window.__autosegBridge = {
      clickable info bubbles for every stat. Additive; see AUDIT.md / handoff.
      ===================================================================== -->
 <style id="stats-info-styles">
-  /* Front wall / Floor bounce: the wide/tall diagrams were being stretched to a
-     tall panel and letterboxed into a small centred band, so the shot dots
-     looked like they floated off the diagram. Size each SVG to its natural
-     aspect and top-align it so the dots sit directly on the wall/court — the
-     diagram width is unchanged (not enlarged), the panel just stops being
-     over-tall. */
+  /* Front wall / Floor bounce: size each SVG to its natural aspect and
+     top-align it so the shot dots sit directly on the diagram (no letterbox).
+     Both shells now use the same 640×975 viewBox, so the two panels render the
+     same height and end level — with round (undistorted) dots. */
   .dash-shots-row { align-items: start; }
   .dash-right > .dash-shots-row { flex: 0 0 auto; }
   .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
