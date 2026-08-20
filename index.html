@@ -5097,9 +5097,17 @@
       </div>
 
       <div class="dash-right">
-        <!-- Per-person shot-quality ratios (short:long, forced:unforced,
-             closed:open) — filled by renderDashRatios() (whole-match). -->
-        <div class="dash-panel dash-ratios-panel" id="dash-ratios"></div>
+        <div class="dash-panel">
+          <div class="dash-panel-h">
+            <div class="dash-panel-title">Player heatmap</div>
+            <div class="dash-shot-filter">
+              <label><input type="checkbox" class="dash-filter-p1" checked><span class="dash-dot dash-dot-p1"></span><span class="dash-fname-p1">You</span></label>
+              <label><input type="checkbox" class="dash-filter-p2" checked><span class="dash-dot dash-dot-p2"></span><span class="dash-fname-p2">Opp</span></label>
+              <label><input type="checkbox" id="dash-filter-egg" checked><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
+            </div>
+          </div>
+          <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
+        </div>
         <div class="dash-shots-row">
           <div class="dash-panel">
             <div class="dash-panel-h">
@@ -5122,17 +5130,9 @@
             <div id="dash-floor-svg" class="dash-svg-host dash-svg-half"></div>
           </div>
         </div>
-        <div class="dash-panel">
-          <div class="dash-panel-h">
-            <div class="dash-panel-title">Player heatmap</div>
-            <div class="dash-shot-filter">
-              <label><input type="checkbox" class="dash-filter-p1" checked><span class="dash-dot dash-dot-p1"></span><span class="dash-fname-p1">You</span></label>
-              <label><input type="checkbox" class="dash-filter-p2" checked><span class="dash-dot dash-dot-p2"></span><span class="dash-fname-p2">Opp</span></label>
-              <label><input type="checkbox" id="dash-filter-egg" checked><span class="dash-dot" style="background:#f5d75a"></span><span>Egg</span></label>
-            </div>
-          </div>
-          <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
-        </div>
+        <!-- Per-person shot-quality ratios (short:deep, forced:unforced,
+             closed:open) — filled by renderDashRatios() (whole-match). -->
+        <div class="dash-panel dash-ratios-panel" id="dash-ratios"></div>
       </div>
       <!-- AI chat spans the full dashboard width, below both columns. -->
       <div class="dash-panel dash-chat-panel dash-chat-full" id="dash-chat-panel"></div>
