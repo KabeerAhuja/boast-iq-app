@@ -5044,10 +5044,25 @@
                  Mirrors the right-side Player heatmap; collapsible via the –/＋ toggle. -->
             <div class="pv-heat-overlay" id="pv-heat-overlay">
               <div class="pv-heat-overlay-head">
-                <span class="pv-heat-overlay-title">Movement</span>
+                <div class="pv-heat-tabs" role="tablist">
+                  <button class="pv-heat-tab active" data-view="move" type="button">Move</button>
+                  <button class="pv-heat-tab" data-view="bounce" type="button">Bounce</button>
+                </div>
                 <button class="pv-heat-overlay-toggle" id="pv-heat-overlay-toggle" type="button" aria-label="Collapse heatmap">–</button>
               </div>
-              <div class="pv-heat-overlay-body" id="dash-heatmap-overlay-svg"></div>
+              <div class="pv-heat-overlay-body">
+                <div class="pv-heat-view" data-view="move" id="dash-heatmap-overlay-svg"></div>
+                <div class="pv-heat-view pv-heat-bounce" data-view="bounce" hidden>
+                  <div class="pv-heat-sub">
+                    <div class="pv-heat-sub-label">Front wall</div>
+                    <div class="pv-heat-sub-svg" id="dash-wall-overlay-svg"></div>
+                  </div>
+                  <div class="pv-heat-sub">
+                    <div class="pv-heat-sub-label">Floor</div>
+                    <div class="pv-heat-sub-svg" id="dash-floor-overlay-svg"></div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="dash-viewer-loading is-hidden" id="pv-loading" aria-hidden="true">
               <div class="dash-viewer-spinner"></div>
@@ -15663,10 +15678,28 @@ window.__autosegBridge = {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 6px 6px 6px 10px;
   }
-  .pv-heat-overlay-title {
-    font: 700 10px/1 'Space Grotesk', sans-serif; letter-spacing: .12em;
-    text-transform: uppercase; color: rgba(255, 255, 255, 0.7); white-space: nowrap;
+  .pv-heat-tabs {
+    display: flex; gap: 3px; padding: 2px;
+    background: rgba(255, 255, 255, 0.07); border-radius: 8px;
   }
+  .pv-heat-tab {
+    -webkit-appearance: none; appearance: none; border: 0; background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    font: 700 9px/1 'Space Grotesk', sans-serif; letter-spacing: .07em; text-transform: uppercase;
+    padding: 4px 7px; border-radius: 6px; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .pv-heat-tab:hover { color: #fff; }
+  .pv-heat-tab.active { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  .pv-heat-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pv-heat-view[hidden] { display: none; }
+  .pv-heat-view.pv-heat-bounce:not([hidden]) { display: flex; flex-direction: column; gap: 6px; }
+  .pv-heat-sub-label {
+    font: 700 8.5px/1 'Space Grotesk', sans-serif; letter-spacing: .1em; text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.55); margin: 0 0 3px 2px;
+  }
+  #dash-heatmap-overlay-svg > svg { width: 100%; height: auto; display: block; }
+  .pv-heat-sub-svg > svg { display: block; margin: 0 auto; height: 132px; width: auto; }
   .pv-heat-overlay-toggle {
     -webkit-appearance: none; appearance: none;
     width: 22px; height: 22px; flex: none; padding: 0; border-radius: 7px;
@@ -15680,10 +15713,9 @@ window.__autosegBridge = {
   .js-motion .pv-heat-overlay-toggle:active { transform: scale(0.9); }
   .pv-heat-overlay-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pv-heat-overlay-body { padding: 0 8px 8px; }
-  .pv-heat-overlay-body > svg { width: 100%; height: auto; display: block; }
   /* Collapsed → just the ＋ chip */
   .pv-heat-overlay.collapsed { width: auto; }
-  .pv-heat-overlay.collapsed .pv-heat-overlay-title,
+  .pv-heat-overlay.collapsed .pv-heat-tabs,
   .pv-heat-overlay.collapsed .pv-heat-overlay-body { display: none; }
   .pv-heat-overlay.collapsed .pv-heat-overlay-head { padding: 5px; }
   @media (max-width: 640px) { .pv-heat-overlay { width: 132px; left: 8px; top: 8px; } }
@@ -15820,32 +15852,60 @@ window.__autosegBridge = {
 </script>
 
 <script>
-/* Video overlay: mirror the live Player-heatmap SVG into the on-video mini-map,
-   and wire its –/＋ collapse toggle. Decoupled from the app module — it just
-   copies #dash-heatmap-svg's markup whenever it changes. */
+/* Video overlay: mirror the live heatmap SVGs into the on-video mini-map, with a
+   Move/Bounce toggle (Bounce = front wall on top + floor bounce on bottom) and a
+   –/＋ collapse toggle. Decoupled from the app module — it copies the existing
+   #dash-*-svg markup whenever it changes, so it stays live automatically. */
 (function () {
   var overlay = document.getElementById('pv-heat-overlay');
   var toggle = document.getElementById('pv-heat-overlay-toggle');
-  var main = document.getElementById('dash-heatmap-svg');
-  var body = document.getElementById('dash-heatmap-overlay-svg');
-  if (!overlay || !toggle || !main || !body) return;
+  if (!overlay || !toggle) return;
+  var src = {
+    move:  document.getElementById('dash-heatmap-svg'),
+    wall:  document.getElementById('dash-wall-svg'),
+    floor: document.getElementById('dash-floor-svg'),
+  };
+  var dst = {
+    move:  document.getElementById('dash-heatmap-overlay-svg'),
+    wall:  document.getElementById('dash-wall-overlay-svg'),
+    floor: document.getElementById('dash-floor-overlay-svg'),
+  };
+  var views = overlay.querySelectorAll('.pv-heat-view');
+  var tabs = overlay.querySelectorAll('.pv-heat-tab');
+  var view = 'move';
+  var last = { move: '', wall: '', floor: '' };
 
-  var last = '';
+  function mirror(key) {
+    var s = src[key], d = dst[key];
+    if (!s || !d) return;
+    var h = s.innerHTML;
+    if (h && h !== last[key]) { last[key] = h; d.innerHTML = h; }
+  }
   function tick() {
-    // Only work when the overlay is actually visible and expanded.
     if (overlay.offsetParent !== null && !overlay.classList.contains('collapsed')) {
-      var html = main.innerHTML;
-      if (html && html !== last) { last = html; body.innerHTML = html; }
+      if (view === 'move') mirror('move');
+      else { mirror('wall'); mirror('floor'); }
     }
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
 
+  function resetLast() { last = { move: '', wall: '', floor: '' }; }
+
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () {
+      view = t.dataset.view;
+      tabs.forEach(function (x) { x.classList.toggle('active', x === t); });
+      views.forEach(function (v) { v.hidden = (v.dataset.view !== view); });
+      resetLast(); // force a repaint of the newly-shown view
+    });
+  });
+
   toggle.addEventListener('click', function () {
     var collapsed = overlay.classList.toggle('collapsed');
     toggle.textContent = collapsed ? '＋' : '–';
     toggle.setAttribute('aria-label', collapsed ? 'Expand heatmap' : 'Collapse heatmap');
-    if (!collapsed) { last = ''; body.innerHTML = main.innerHTML; } // repaint on expand
+    if (!collapsed) resetLast();
   });
 })();
 </script>
