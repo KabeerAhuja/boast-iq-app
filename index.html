@@ -10626,7 +10626,7 @@ function showResults(msg) {
       const sl = r.shortLong, er = r.errors, co = r.closedOpen;
       host.innerHTML = `
         <div class="dash-panel-h"><div class="dash-panel-title">Shot quality — whole match</div></div>
-        ${rowFor('Short : long', 'shortlong',
+        ${rowFor('Short : deep', 'shortlong',
           ratio(sl.p1.short, sl.p1.long), pair(sl.p1.short, sl.p1.long),
           ratio(sl.p2.short, sl.p2.long), pair(sl.p2.short, sl.p2.long))}
         ${rowFor('Forced : unforced errors', 'forced',
@@ -15709,7 +15709,7 @@ window.__autosegBridge = {
     egg:        { t: 'Egg time', d: 'Amount of time per rally spent near the T. Higher % = better court position.' },
     recovery:   { t: 'Recovery time', d: 'How well a player got back toward the T after their shots. Higher = better recovery.' },
     grade:      { t: 'Grade', d: 'Overall shot quality for each player. Provisional placeholder — real shot-grading is coming soon.' },
-    shortlong:  { t: 'Short : long', d: 'Ratio of shots landing short (front third, ≤ 4.26 m from the front wall) to long (back). Whole match.' },
+    shortlong:  { t: 'Short : deep', d: 'Ratio of shots landing short (front third, ≤ 4.26 m from the front wall) to deep (back). Whole match.' },
     forced:     { t: 'Forced : unforced errors', d: 'Rally-ending errors by the point loser, split by whether they were under pressure (forced) or not (unforced). Whole match, first-pass.' },
     closedopen: { t: 'Closed : open', d: 'Straight (closed) vs cross-court (open) shots — the ratio of drives to cross-courts. Whole match.' },
   };
