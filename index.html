@@ -5040,6 +5040,15 @@
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
             <video id="pv-video" playsinline webkit-playsinline preload="auto"></video>
+            <!-- Mini live player-movement heatmap overlaid on the video (left edge).
+                 Mirrors the right-side Player heatmap; collapsible via the –/＋ toggle. -->
+            <div class="pv-heat-overlay" id="pv-heat-overlay">
+              <div class="pv-heat-overlay-head">
+                <span class="pv-heat-overlay-title">Movement</span>
+                <button class="pv-heat-overlay-toggle" id="pv-heat-overlay-toggle" type="button" aria-label="Collapse heatmap">–</button>
+              </div>
+              <div class="pv-heat-overlay-body" id="dash-heatmap-overlay-svg"></div>
+            </div>
             <div class="dash-viewer-loading is-hidden" id="pv-loading" aria-hidden="true">
               <div class="dash-viewer-spinner"></div>
               <div class="dash-viewer-loading-label">Loading video…</div>
@@ -15637,6 +15646,49 @@ window.__autosegBridge = {
   .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
   .dash-shots-row > .dash-panel > .dash-svg-host > svg { width: 100%; height: auto; }
 
+  /* Mini live player-movement heatmap overlaid on the video (left edge). */
+  .pv-heat-overlay {
+    position: absolute; left: 12px; top: 12px; z-index: 6;
+    width: 180px;
+    background: rgba(8, 10, 14, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+    transition: width .28s var(--ease-out, ease);
+  }
+  .pv-heat-overlay-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 6px 6px 10px;
+  }
+  .pv-heat-overlay-title {
+    font: 700 10px/1 'Space Grotesk', sans-serif; letter-spacing: .12em;
+    text-transform: uppercase; color: rgba(255, 255, 255, 0.7); white-space: nowrap;
+  }
+  .pv-heat-overlay-toggle {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px; flex: none; padding: 0; border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08); color: #fff;
+    font: 600 15px/1 system-ui, sans-serif; cursor: pointer;
+    display: grid; place-items: center;
+    transition: background .15s, transform var(--dur-press, 110ms) var(--ease-out, ease);
+  }
+  .pv-heat-overlay-toggle:hover { background: rgba(255, 255, 255, 0.16); }
+  .js-motion .pv-heat-overlay-toggle:active { transform: scale(0.9); }
+  .pv-heat-overlay-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pv-heat-overlay-body { padding: 0 8px 8px; }
+  .pv-heat-overlay-body > svg { width: 100%; height: auto; display: block; }
+  /* Collapsed → just the ＋ chip */
+  .pv-heat-overlay.collapsed { width: auto; }
+  .pv-heat-overlay.collapsed .pv-heat-overlay-title,
+  .pv-heat-overlay.collapsed .pv-heat-overlay-body { display: none; }
+  .pv-heat-overlay.collapsed .pv-heat-overlay-head { padding: 5px; }
+  @media (max-width: 640px) { .pv-heat-overlay { width: 132px; left: 8px; top: 8px; } }
+  @media (prefers-reduced-motion: reduce) { .pv-heat-overlay { transition: none; } }
+
   /* AI chat spans the full dashboard width (both columns), below the grid, and
      gets extra padding above it to separate it from the panels above. */
   .dash-chat-full { grid-column: 1 / -1; margin-top: 16px; }
@@ -15764,6 +15816,37 @@ window.__autosegBridge = {
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
   window.addEventListener('scroll', function () { if (openBtn) place(openBtn); }, true);
   window.addEventListener('resize', closePop);
+})();
+</script>
+
+<script>
+/* Video overlay: mirror the live Player-heatmap SVG into the on-video mini-map,
+   and wire its –/＋ collapse toggle. Decoupled from the app module — it just
+   copies #dash-heatmap-svg's markup whenever it changes. */
+(function () {
+  var overlay = document.getElementById('pv-heat-overlay');
+  var toggle = document.getElementById('pv-heat-overlay-toggle');
+  var main = document.getElementById('dash-heatmap-svg');
+  var body = document.getElementById('dash-heatmap-overlay-svg');
+  if (!overlay || !toggle || !main || !body) return;
+
+  var last = '';
+  function tick() {
+    // Only work when the overlay is actually visible and expanded.
+    if (overlay.offsetParent !== null && !overlay.classList.contains('collapsed')) {
+      var html = main.innerHTML;
+      if (html && html !== last) { last = html; body.innerHTML = html; }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  toggle.addEventListener('click', function () {
+    var collapsed = overlay.classList.toggle('collapsed');
+    toggle.textContent = collapsed ? '＋' : '–';
+    toggle.setAttribute('aria-label', collapsed ? 'Expand heatmap' : 'Collapse heatmap');
+    if (!collapsed) { last = ''; body.innerHTML = main.innerHTML; } // repaint on expand
+  });
 })();
 </script>
 </body>
