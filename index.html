@@ -5094,7 +5094,6 @@
 
         <!-- FS-0003 highlights strip: preset per-player reels, filled by renderHighlights() -->
         <div class="pv-highlights-section" id="pv-highlights"></div>
-        <div class="dash-panel dash-chat-panel" id="dash-chat-panel"></div>
       </div>
 
       <div class="dash-right">
@@ -5135,6 +5134,8 @@
           <div id="dash-heatmap-svg" class="dash-svg-host dash-svg-tall"></div>
         </div>
       </div>
+      <!-- AI chat spans the full dashboard width, below both columns. -->
+      <div class="dash-panel dash-chat-panel dash-chat-full" id="dash-chat-panel"></div>
     </div>
 
     <div class="pv-points-section">
@@ -15635,6 +15636,10 @@ window.__autosegBridge = {
   .dash-shots-row { align-items: start; }
   .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
   .dash-shots-row > .dash-panel > .dash-svg-host > svg { width: 100%; height: auto; }
+
+  /* AI chat spans the full dashboard width (both columns), below the grid, and
+     gets extra padding above it to separate it from the panels above. */
+  .dash-chat-full { grid-column: 1 / -1; margin-top: 16px; }
 
   /* Per-person ratio panel under the heatmaps */
   .dash-ratios-panel { padding: 14px 16px; }
