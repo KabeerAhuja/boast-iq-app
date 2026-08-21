@@ -10318,7 +10318,7 @@ function showResults(msg) {
     const cX = m => 10 + (m / 6.4) * 620;
     const cY = m => 10 + (m / 9.75) * 955;   // y=0 = front wall (top)
     const wX = m => 10 + (m / 6.4) * 620;
-    const wY = m => 965 - (m / 4.57) * 955;  // floor at bottom (y=965), wall drawn in the 640×975 viewBox
+    const wY = m => 447 - (m / 4.57) * 437;  // floor at bottom (y=447), wall in the true-aspect 640×457 viewBox
 
     // Singles "egg" zone. Ellipse whose half-width grows linearly from 1.55m (front tip,
     // 3.10m from front wall) to 1.77m (back, 7.77m), centered on the 3.2m half-court line.
@@ -10386,18 +10386,17 @@ function showResults(msg) {
         </svg>`;
     }
     function wallShellSvg(innerHtml) {
-      // Uses the SAME 640×975 viewBox as the floor court so the two panels
-      // render the same height and end level (with round dots). The 4.57 m wall
-      // is drawn stretched to fill that height; the outline is x=10..630,
-      // y=10..965. service line 1.78 m from floor → y=593; tin 0.48 m strip.
+      // True front-wall proportions: 6.4 m wide × 4.57 m tall → viewBox 640×457.
+      // Outline x=10..630, y=10..447. Service (cut) line 1.78 m from floor → y≈277;
+      // tin = 0.48 m strip along the bottom (y≈401..447).
       const cid = 'wall-clip-' + (++__shellClipSeq);
       return `
-        <svg viewBox="0 0 640 975" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="955"/></clipPath></defs>
-          <rect class="dash-court-bg" x="10" y="10" width="620" height="955"/>
-          <rect class="dash-court-line" x="10" y="10" width="620" height="955"/>
-          <line class="dash-court-line" x1="10" y1="593" x2="630" y2="593"/>
-          <rect class="dash-tin" x="10" y="865" width="620" height="100"/>
+        <svg viewBox="0 0 640 457" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="437"/></clipPath></defs>
+          <rect class="dash-court-bg" x="10" y="10" width="620" height="437"/>
+          <rect class="dash-court-line" x="10" y="10" width="620" height="437"/>
+          <line class="dash-court-line" x1="10" y1="277" x2="630" y2="277"/>
+          <rect class="dash-tin" x="10" y="401" width="620" height="46"/>
           <g clip-path="url(#${cid})">${innerHtml || ''}</g>
         </svg>`;
     }
@@ -15699,7 +15698,9 @@ window.__autosegBridge = {
     color: rgba(255, 255, 255, 0.55); margin: 0 0 3px 2px;
   }
   #dash-heatmap-overlay-svg > svg { width: 100%; height: auto; display: block; }
-  .pv-heat-sub-svg > svg { display: block; margin: 0 auto; height: 132px; width: auto; }
+  /* Size bounce mini-courts by width so both fit and keep true proportions
+     (front wall 6.4×4.57 wide-short on top; floor 6.4×9.75 tall below). */
+  .pv-heat-sub-svg > svg { display: block; width: 100%; height: auto; }
   .pv-heat-overlay-toggle {
     -webkit-appearance: none; appearance: none;
     width: 22px; height: 22px; flex: none; padding: 0; border-radius: 7px;
