@@ -15905,6 +15905,35 @@ window.__autosegBridge = {
     if (shotsRow) shotsRow.classList.toggle('dash-hide', view === 'bounce');
   }
 
+  // Keep the WHOLE map within the video height: clamp the overlay width so its
+  // natural content height can't exceed the video frame. This means the map is
+  // always fully visible (never cut off) and the popup never gets taller than
+  // the video — even in Bounce view, which stacks two courts.
+  var body = overlay.querySelector('.pv-heat-overlay-body');
+  var head = overlay.querySelector('.pv-heat-overlay-head');
+  var frame = overlay.closest('.dash-viewer-frame');
+  var fitQueued = false;
+  function fitOverlay() {
+    fitQueued = false;
+    if (!frame || !body || overlay.classList.contains('collapsed')) return;
+    var availH = frame.clientHeight - 24;                 // minus top+bottom margin
+    if (availH <= 40) return;                             // frame not laid out yet
+    var w = overlay.offsetWidth;
+    var natH = (head ? head.offsetHeight : 0) + body.scrollHeight; // full content height at this width
+    if (!w || natH <= 0) return;
+    // width at which content height == availH (content scales with width)
+    var maxW = Math.max(130, Math.min(480, Math.floor(availH * w / natH)));
+    var want = maxW + 'px';
+    if (overlay.style.maxWidth !== want) overlay.style.maxWidth = want;
+    if (overlay.offsetWidth > maxW) overlay.style.width = want;
+  }
+  function queueFit() { if (!fitQueued) { fitQueued = true; requestAnimationFrame(fitOverlay); } }
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(queueFit).observe(overlay);
+    if (frame) new ResizeObserver(queueFit).observe(frame);
+  }
+  window.addEventListener('resize', queueFit);
+
   function mirror(key) {
     var s = src[key], d = dst[key];
     if (!s || !d) return;
@@ -15931,14 +15960,17 @@ window.__autosegBridge = {
       views.forEach(function (v) { v.hidden = (v.dataset.view !== view); });
       applyRightSide(); // keep the right column complementary to the overlay
       resetLast(); // force a repaint of the newly-shown view
+      queueFit();  // views differ in height → re-fit to the video
     });
   });
+
+  queueFit(); // initial fit once laid out
 
   toggle.addEventListener('click', function () {
     var collapsed = overlay.classList.toggle('collapsed');
     toggle.textContent = collapsed ? '＋' : '–';
     toggle.setAttribute('aria-label', collapsed ? 'Expand heatmap' : 'Collapse heatmap');
-    if (!collapsed) resetLast();
+    if (!collapsed) { resetLast(); queueFit(); }
   });
 })();
 </script>
