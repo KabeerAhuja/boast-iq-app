@@ -10738,13 +10738,23 @@ function showResults(msg) {
       return { shortLong: sl, errors: err, closedOpen };
     }
 
-    // Grade of shots — PLACEHOLDER. Lane 6 (shot grading) is still in flight;
-    // it will supply the real per-player grade. Until then this returns an
-    // arbitrary provisional value so the card + layout are in place.
-    // TODO(lane 6 — shot grading): replace with the real grade source.
-    const SHOT_GRADE_PLACEHOLDER = { p1: '7.8', p2: '8.1' };
-    function shotGrade(scope, playerKey) {
-      return SHOT_GRADE_PLACEHOLDER[playerKey] != null ? SHOT_GRADE_PLACEHOLDER[playerKey] : '—';
+    // Shot execution grade (FS-0013 / lane 6, now LIVE). The backend writes an
+    // absolute 1–5 `grade` on each gradeable shot in the point files; serves and
+    // ungradeable shots carry no grade. Per player, the card shows the simple
+    // mean of their graded shots. gradeAvg() returns {p1, p2} means (or null
+    // where a player has no graded shots) for one rally or a whole match.
+    function gradeAvg(rally) {
+      const acc = { player_1: { sum: 0, n: 0 }, player_2: { sum: 0, n: 0 } };
+      (rally || []).forEach(s => {
+        if (typeof s.grade !== 'number') return;
+        const who = s.hit_by;
+        if (who !== 'player_1' && who !== 'player_2') return;
+        acc[who].sum += s.grade; acc[who].n++;
+      });
+      return {
+        p1: acc.player_1.n ? acc.player_1.sum / acc.player_1.n : null,
+        p2: acc.player_2.n ? acc.player_2.sum / acc.player_2.n : null,
+      };
     }
 
     function buildPointStats(pt) {
@@ -10771,7 +10781,9 @@ function showResults(msg) {
         rally.filter(s => s.hit_by === player && shotClassOf(s) === cls).length;
       const eggOf = (player) => { const c = eggCounts(pt, player); return eggScore(c.inside, c.total); };
       const sl = shortLongCounts(rally);
+      const g = gradeAvg(rally);
       return {
+        gradeP1: g.p1, gradeP2: g.p2,
         duration: `${(pt.duration_sec || 0).toFixed(1)} s`,
         totalShots: rally.length,
         avgRally: `${(pt.duration_sec || 0).toFixed(1)} s`,
@@ -10847,6 +10859,7 @@ function showResults(msg) {
       // once the backend has computed them. Order: Pressure P1, Pressure P2,
       // Egg time, Recovery time. Shown only when the fields exist.
       const pv = v => (v == null ? '—' : `${Math.round(v)}<span class="dash-stat-unit">/100</span>`);
+      const gradeFmt = v => (typeof v !== 'number' ? '—' : `${v.toFixed(1)}<span class="dash-stat-unit">/5</span>`);
       const eggFmt = v => (v == null ? '—' : `${Math.round(v)}%`);
       const recFmt = v => (v == null ? '—' : `${Math.round(v)}`);
       const pcardBody = (name, dotClass, val) =>
@@ -10872,9 +10885,9 @@ function showResults(msg) {
       ];
       body.innerHTML = `<div class="dash-stats-grid">${[
         ...movementCards,
-        // Grade replaces Duration (per request). Provisional placeholder until
-        // lane 6 (shot grading) ships — see shotGrade().
-        card('Grade', dual(shotGrade(scope, 'p1'), shotGrade(scope, 'p2')), 'grade'),
+        // Grade replaces Duration (per request). FS-0013: real per-player mean
+        // execution grade (1–5) — see gradeAvg() + s.gradeP1/P2.
+        card('Grade', dual(gradeFmt(s.gradeP1), gradeFmt(s.gradeP2)), 'grade'),
         card('Total shots', one(s.totalShots)),
         card(scope === 'point' ? 'Cur rally' : 'Avg rally', one(s.avgRally || s.duration)),
         card('Distance', dual(s.distP1, s.distP2)),
@@ -10958,6 +10971,7 @@ function showResults(msg) {
         let p1Shots = 0, p2Shots = 0;
         let p1Dist = 0, p2Dist = 0;
         let p1EggIn = 0, p1EggTot = 0, p2EggIn = 0, p2EggTot = 0;
+        let p1GradeSum = 0, p1GradeN = 0, p2GradeSum = 0, p2GradeN = 0;
         const cls = { p1: {drive:0,drop:0,boast:0,volley:0}, p2: {drive:0,drop:0,boast:0,volley:0} };
         allRallies.forEach(rd => {
           (rd.rally || []).forEach(shot => {
@@ -10965,6 +10979,11 @@ function showResults(msg) {
             if (k === 'p1') p1Shots++; else p2Shots++;
             const sc = shotClassOf(shot);
             if (sc && cls[k][sc] != null) cls[k][sc]++;
+            // FS-0013 execution grade (absolute 1–5; absent on serves/ungradeable).
+            if (typeof shot.grade === 'number') {
+              if (k === 'p1') { p1GradeSum += shot.grade; p1GradeN++; }
+              else { p2GradeSum += shot.grade; p2GradeN++; }
+            }
           });
           const d1 = movementDistance(rd, 'player_1');
           const d2 = movementDistance(rd, 'player_2');
@@ -11002,6 +11021,9 @@ function showResults(msg) {
           drops:   aggDrops,
           boasts:  aggBoasts,
           volleys: aggVolleys,
+          // FS-0013 per-player mean execution grade (1–5) across the whole match.
+          gradeP1: p1GradeN ? p1GradeSum / p1GradeN : null,
+          gradeP2: p2GradeN ? p2GradeSum / p2GradeN : null,
           // Movement stats (Pressure / Egg time / Recovery) come from the backend
           // match_summary (pipeline-computed / backfilled) — not recomputed here.
           pressureP1: (indexData.match_summary || {}).pressureP1,
@@ -15708,7 +15730,7 @@ window.__autosegBridge = {
     pressure:   { t: 'Pressure', d: 'How hard a player was made to work, from their own movement. Higher = under more pressure.' },
     egg:        { t: 'Egg time', d: 'Amount of time per rally spent near the T. Higher % = better court position.' },
     recovery:   { t: 'Recovery time', d: 'How well a player got back toward the T after their shots. Higher = better recovery.' },
-    grade:      { t: 'Grade', d: 'Overall shot quality for each player. Provisional placeholder — real shot-grading is coming soon.' },
+    grade:      { t: 'Grade', d: 'Average shot-execution grade (1–5) per player — how well each shot is played (tight to the wall, good length/accuracy, well-paced), scored on an absolute scale calibrated across all matches so it stays comparable over time. Serves aren\'t graded. Whole match, or the selected point.' },
     shortlong:  { t: 'Short : deep', d: 'Ratio of shots landing short (front third, ≤ 4.26 m from the front wall) to deep (back). Whole match.' },
     forced:     { t: 'Forced : unforced errors', d: 'Rally-ending errors by the point loser, split by whether they were under pressure (forced) or not (unforced). Whole match, first-pass.' },
     closedopen: { t: 'Closed : open', d: 'Straight (closed) vs cross-court (open) shots — the ratio of drives to cross-courts. Whole match.' },
