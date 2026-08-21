@@ -5121,7 +5121,7 @@
       </div>
 
       <div class="dash-right">
-        <div class="dash-panel">
+        <div class="dash-panel" id="dash-player-panel">
           <div class="dash-panel-h">
             <div class="dash-panel-title">Player heatmap</div>
             <div class="dash-shot-filter">
@@ -15660,6 +15660,9 @@ window.__autosegBridge = {
   .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
   .dash-shots-row > .dash-panel > .dash-svg-host > svg { width: 100%; height: auto; }
 
+  /* Reliable hide (beats display:grid/flex on the panels). */
+  .dash-hide { display: none !important; }
+
   /* Mini live player-movement heatmap overlaid on the video (left edge). */
   .pv-heat-overlay {
     position: absolute; left: 12px; top: 12px; z-index: 6;
@@ -15876,6 +15879,17 @@ window.__autosegBridge = {
   var view = 'move';
   var last = { move: '', wall: '', floor: '' };
 
+  // Right-side panels are COMPLEMENTARY to the overlay: whatever the overlay
+  // shows on the video, the right column shows the other (never both).
+  var playerPanel = document.getElementById('dash-player-panel');
+  var shotsRow = overlay.ownerDocument.querySelector('.dash-shots-row');
+  function applyRightSide() {
+    // overlay = player (move)  → right shows ball bounce heatmaps
+    // overlay = ball  (bounce) → right shows player heatmap
+    if (playerPanel) playerPanel.classList.toggle('dash-hide', view === 'move');
+    if (shotsRow) shotsRow.classList.toggle('dash-hide', view === 'bounce');
+  }
+
   function mirror(key) {
     var s = src[key], d = dst[key];
     if (!s || !d) return;
@@ -15893,11 +15907,14 @@ window.__autosegBridge = {
 
   function resetLast() { last = { move: '', wall: '', floor: '' }; }
 
+  applyRightSide(); // default view = move → right shows ball bounce
+
   tabs.forEach(function (t) {
     t.addEventListener('click', function () {
       view = t.dataset.view;
       tabs.forEach(function (x) { x.classList.toggle('active', x === t); });
       views.forEach(function (v) { v.hidden = (v.dataset.view !== view); });
+      applyRightSide(); // keep the right column complementary to the overlay
       resetLast(); // force a repaint of the newly-shown view
     });
   });
