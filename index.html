@@ -8007,7 +8007,7 @@ async function uploadThumbnail(key, sourceCanvas) {
 // if the point count changed (video was re-processed) the rally cache is
 // dropped so stale rallies can't linger.
 const STATS_CACHE_PREFIX = "boastiq_stats_";
-const STATS_CACHE_VERSION = 5; // v5: global pressure scale backfill (2026-07-21)
+const STATS_CACHE_VERSION = 6; // v6: force re-fetch after regate added per-point movement + grades (2026-09-02)
 const _inflightPrefetch = new Set();
 
 function _statsCacheKey(key) { return STATS_CACHE_PREFIX + key; }
