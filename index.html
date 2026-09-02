@@ -5040,6 +5040,30 @@
         <div class="dash-panel dash-viewer-panel">
           <div class="dash-viewer-frame">
             <video id="pv-video" playsinline webkit-playsinline preload="auto"></video>
+            <!-- Mini live player-movement heatmap overlaid on the video (left edge).
+                 Mirrors the right-side Player heatmap; collapsible via the –/＋ toggle. -->
+            <div class="pv-heat-overlay" id="pv-heat-overlay">
+              <div class="pv-heat-overlay-head">
+                <div class="pv-heat-tabs" role="tablist">
+                  <button class="pv-heat-tab active" data-view="move" type="button">Move</button>
+                  <button class="pv-heat-tab" data-view="bounce" type="button">Bounce</button>
+                </div>
+                <button class="pv-heat-overlay-toggle" id="pv-heat-overlay-toggle" type="button" aria-label="Collapse heatmap">–</button>
+              </div>
+              <div class="pv-heat-overlay-body">
+                <div class="pv-heat-view" data-view="move" id="dash-heatmap-overlay-svg"></div>
+                <div class="pv-heat-view pv-heat-bounce" data-view="bounce" hidden>
+                  <div class="pv-heat-sub">
+                    <div class="pv-heat-sub-label">Front wall</div>
+                    <div class="pv-heat-sub-svg" id="dash-wall-overlay-svg"></div>
+                  </div>
+                  <div class="pv-heat-sub">
+                    <div class="pv-heat-sub-label">Floor</div>
+                    <div class="pv-heat-sub-svg" id="dash-floor-overlay-svg"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="dash-viewer-loading is-hidden" id="pv-loading" aria-hidden="true">
               <div class="dash-viewer-spinner"></div>
               <div class="dash-viewer-loading-label">Loading video…</div>
@@ -5097,7 +5121,7 @@
       </div>
 
       <div class="dash-right">
-        <div class="dash-panel">
+        <div class="dash-panel" id="dash-player-panel">
           <div class="dash-panel-h">
             <div class="dash-panel-title">Player heatmap</div>
             <div class="dash-shot-filter">
@@ -10294,7 +10318,7 @@ function showResults(msg) {
     const cX = m => 10 + (m / 6.4) * 620;
     const cY = m => 10 + (m / 9.75) * 955;   // y=0 = front wall (top)
     const wX = m => 10 + (m / 6.4) * 620;
-    const wY = m => 965 - (m / 4.57) * 955;  // floor at bottom (y=965), wall drawn in the 640×975 viewBox
+    const wY = m => 447 - (m / 4.57) * 437;  // floor at bottom (y=447), wall in the true-aspect 640×457 viewBox
 
     // Singles "egg" zone. Ellipse whose half-width grows linearly from 1.55m (front tip,
     // 3.10m from front wall) to 1.77m (back, 7.77m), centered on the 3.2m half-court line.
@@ -10362,18 +10386,17 @@ function showResults(msg) {
         </svg>`;
     }
     function wallShellSvg(innerHtml) {
-      // Uses the SAME 640×975 viewBox as the floor court so the two panels
-      // render the same height and end level (with round dots). The 4.57 m wall
-      // is drawn stretched to fill that height; the outline is x=10..630,
-      // y=10..965. service line 1.78 m from floor → y=593; tin 0.48 m strip.
+      // True front-wall proportions: 6.4 m wide × 4.57 m tall → viewBox 640×457.
+      // Outline x=10..630, y=10..447. Service (cut) line 1.78 m from floor → y≈277;
+      // tin = 0.48 m strip along the bottom (y≈401..447).
       const cid = 'wall-clip-' + (++__shellClipSeq);
       return `
-        <svg viewBox="0 0 640 975" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="955"/></clipPath></defs>
-          <rect class="dash-court-bg" x="10" y="10" width="620" height="955"/>
-          <rect class="dash-court-line" x="10" y="10" width="620" height="955"/>
-          <line class="dash-court-line" x1="10" y1="593" x2="630" y2="593"/>
-          <rect class="dash-tin" x="10" y="865" width="620" height="100"/>
+        <svg viewBox="0 0 640 457" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <defs><clipPath id="${cid}"><rect x="10" y="10" width="620" height="437"/></clipPath></defs>
+          <rect class="dash-court-bg" x="10" y="10" width="620" height="437"/>
+          <rect class="dash-court-line" x="10" y="10" width="620" height="437"/>
+          <line class="dash-court-line" x1="10" y1="277" x2="630" y2="277"/>
+          <rect class="dash-tin" x="10" y="401" width="620" height="46"/>
           <g clip-path="url(#${cid})">${innerHtml || ''}</g>
         </svg>`;
     }
@@ -15659,6 +15682,86 @@ window.__autosegBridge = {
   .dash-shots-row > .dash-panel > .dash-svg-host { flex: 0 0 auto; align-items: flex-start; }
   .dash-shots-row > .dash-panel > .dash-svg-host > svg { width: 100%; height: auto; }
 
+  /* Reliable hide (beats display:grid/flex on the panels). */
+  .dash-hide { display: none !important; }
+
+  /* Mini live player-movement heatmap overlaid on the video (left edge). */
+  .pv-heat-overlay {
+    position: absolute; left: 12px; top: 12px; z-index: 6;
+    width: 180px;
+    min-width: 130px; max-width: 480px;
+    max-height: calc(100% - 24px);   /* never taller than the video frame */
+    resize: horizontal;              /* drag the corner to scale the map (height follows) */
+    display: flex; flex-direction: column;
+    background: rgba(8, 10, 14, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+  /* Corner grip hint (native resizer sits underneath; keep it click-through). */
+  .pv-heat-overlay::after {
+    content: ''; position: absolute; right: 3px; bottom: 3px; width: 9px; height: 9px;
+    pointer-events: none; opacity: .55;
+    background: linear-gradient(135deg, transparent 0 46%, rgba(255,255,255,.7) 46% 58%,
+      transparent 58% 70%, rgba(255,255,255,.7) 70% 82%, transparent 82%);
+  }
+  .pv-heat-overlay.collapsed::after { display: none; }
+  .pv-heat-overlay-head {
+    flex: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 6px 6px 10px;
+  }
+  .pv-heat-tabs {
+    display: flex; gap: 3px; padding: 2px;
+    background: rgba(255, 255, 255, 0.07); border-radius: 8px;
+  }
+  .pv-heat-tab {
+    -webkit-appearance: none; appearance: none; border: 0; background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    font: 700 9px/1 'Space Grotesk', sans-serif; letter-spacing: .07em; text-transform: uppercase;
+    padding: 4px 7px; border-radius: 6px; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .pv-heat-tab:hover { color: #fff; }
+  .pv-heat-tab.active { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  .pv-heat-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pv-heat-view[hidden] { display: none; }
+  .pv-heat-view.pv-heat-bounce:not([hidden]) { display: flex; flex-direction: column; gap: 6px; }
+  .pv-heat-sub-label {
+    font: 700 8.5px/1 'Space Grotesk', sans-serif; letter-spacing: .1em; text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.55); margin: 0 0 3px 2px;
+  }
+  #dash-heatmap-overlay-svg > svg { width: 100%; height: auto; display: block; }
+  /* Size bounce mini-courts by width so both fit and keep true proportions
+     (front wall 6.4×4.57 wide-short on top; floor 6.4×9.75 tall below). */
+  .pv-heat-sub-svg > svg { display: block; width: 100%; height: auto; }
+  .pv-heat-overlay-toggle {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px; flex: none; padding: 0; border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08); color: #fff;
+    font: 600 15px/1 system-ui, sans-serif; cursor: pointer;
+    display: grid; place-items: center;
+    transition: background .15s, transform var(--dur-press, 110ms) var(--ease-out, ease);
+  }
+  .pv-heat-overlay-toggle:hover { background: rgba(255, 255, 255, 0.16); }
+  .js-motion .pv-heat-overlay-toggle:active { transform: scale(0.9); }
+  .pv-heat-overlay-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pv-heat-overlay-body { padding: 0 8px 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .pv-heat-overlay-body::-webkit-scrollbar { width: 6px; }
+  .pv-heat-overlay-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 3px; }
+  /* Collapsed → just the ＋ chip (override any resized inline width; it's
+     restored on expand since this rule stops matching). */
+  .pv-heat-overlay.collapsed { width: auto !important; min-width: 0 !important; resize: none; }
+  .pv-heat-overlay.collapsed .pv-heat-tabs,
+  .pv-heat-overlay.collapsed .pv-heat-overlay-body { display: none; }
+  .pv-heat-overlay.collapsed .pv-heat-overlay-head { padding: 5px; }
+  @media (max-width: 640px) { .pv-heat-overlay { width: 132px; left: 8px; top: 8px; } }
+  @media (prefers-reduced-motion: reduce) { .pv-heat-overlay { transition: none; } }
+
   /* AI chat spans the full dashboard width (both columns), below the grid, and
      gets extra padding above it to separate it from the panels above. */
   .dash-chat-full { grid-column: 1 / -1; margin-top: 16px; }
@@ -15786,6 +15889,111 @@ window.__autosegBridge = {
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
   window.addEventListener('scroll', function () { if (openBtn) place(openBtn); }, true);
   window.addEventListener('resize', closePop);
+})();
+</script>
+
+<script>
+/* Video overlay: mirror the live heatmap SVGs into the on-video mini-map, with a
+   Move/Bounce toggle (Bounce = front wall on top + floor bounce on bottom) and a
+   –/＋ collapse toggle. Decoupled from the app module — it copies the existing
+   #dash-*-svg markup whenever it changes, so it stays live automatically. */
+(function () {
+  var overlay = document.getElementById('pv-heat-overlay');
+  var toggle = document.getElementById('pv-heat-overlay-toggle');
+  if (!overlay || !toggle) return;
+  var src = {
+    move:  document.getElementById('dash-heatmap-svg'),
+    wall:  document.getElementById('dash-wall-svg'),
+    floor: document.getElementById('dash-floor-svg'),
+  };
+  var dst = {
+    move:  document.getElementById('dash-heatmap-overlay-svg'),
+    wall:  document.getElementById('dash-wall-overlay-svg'),
+    floor: document.getElementById('dash-floor-overlay-svg'),
+  };
+  var views = overlay.querySelectorAll('.pv-heat-view');
+  var tabs = overlay.querySelectorAll('.pv-heat-tab');
+  var view = 'move';
+  var last = { move: '', wall: '', floor: '' };
+
+  // Right-side panels are COMPLEMENTARY to the overlay: whatever the overlay
+  // shows on the video, the right column shows the other (never both).
+  var playerPanel = document.getElementById('dash-player-panel');
+  var shotsRow = overlay.ownerDocument.querySelector('.dash-shots-row');
+  function applyRightSide() {
+    // overlay = player (move)  → right shows ball bounce heatmaps
+    // overlay = ball  (bounce) → right shows player heatmap
+    if (playerPanel) playerPanel.classList.toggle('dash-hide', view === 'move');
+    if (shotsRow) shotsRow.classList.toggle('dash-hide', view === 'bounce');
+  }
+
+  // Keep the WHOLE map within the video height: clamp the overlay width so its
+  // natural content height can't exceed the video frame. This means the map is
+  // always fully visible (never cut off) and the popup never gets taller than
+  // the video — even in Bounce view, which stacks two courts.
+  var body = overlay.querySelector('.pv-heat-overlay-body');
+  var head = overlay.querySelector('.pv-heat-overlay-head');
+  var frame = overlay.closest('.dash-viewer-frame');
+  var fitQueued = false;
+  function fitOverlay() {
+    fitQueued = false;
+    if (!frame || !body || overlay.classList.contains('collapsed')) return;
+    var availH = frame.clientHeight - 24;                 // minus top+bottom margin
+    if (availH <= 40) return;                             // frame not laid out yet
+    var w = overlay.offsetWidth;
+    var natH = (head ? head.offsetHeight : 0) + body.scrollHeight; // full content height at this width
+    if (!w || natH <= 0) return;
+    // width at which content height == availH (content scales with width)
+    var maxW = Math.max(130, Math.min(480, Math.floor(availH * w / natH)));
+    var want = maxW + 'px';
+    if (overlay.style.maxWidth !== want) overlay.style.maxWidth = want;
+    if (overlay.offsetWidth > maxW) overlay.style.width = want;
+  }
+  function queueFit() { if (!fitQueued) { fitQueued = true; requestAnimationFrame(fitOverlay); } }
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(queueFit).observe(overlay);
+    if (frame) new ResizeObserver(queueFit).observe(frame);
+  }
+  window.addEventListener('resize', queueFit);
+
+  function mirror(key) {
+    var s = src[key], d = dst[key];
+    if (!s || !d) return;
+    var h = s.innerHTML;
+    if (h && h !== last[key]) { last[key] = h; d.innerHTML = h; }
+  }
+  function tick() {
+    if (overlay.offsetParent !== null && !overlay.classList.contains('collapsed')) {
+      if (view === 'move') mirror('move');
+      else { mirror('wall'); mirror('floor'); }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  function resetLast() { last = { move: '', wall: '', floor: '' }; }
+
+  applyRightSide(); // default view = move → right shows ball bounce
+
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () {
+      view = t.dataset.view;
+      tabs.forEach(function (x) { x.classList.toggle('active', x === t); });
+      views.forEach(function (v) { v.hidden = (v.dataset.view !== view); });
+      applyRightSide(); // keep the right column complementary to the overlay
+      resetLast(); // force a repaint of the newly-shown view
+      queueFit();  // views differ in height → re-fit to the video
+    });
+  });
+
+  queueFit(); // initial fit once laid out
+
+  toggle.addEventListener('click', function () {
+    var collapsed = overlay.classList.toggle('collapsed');
+    toggle.textContent = collapsed ? '＋' : '–';
+    toggle.setAttribute('aria-label', collapsed ? 'Expand heatmap' : 'Collapse heatmap');
+    if (!collapsed) { resetLast(); queueFit(); }
+  });
 })();
 </script>
 </body>
