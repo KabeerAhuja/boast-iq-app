@@ -10372,8 +10372,8 @@ function showResults(msg) {
       return `
         <svg viewBox="0 0 640 975" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
           <defs>
-            <radialGradient id="dash-heat-p1"><stop offset="0%" stop-color="#00f0ff" stop-opacity="0.14"/><stop offset="60%" stop-color="#00f0ff" stop-opacity="0.06"/><stop offset="100%" stop-color="#00f0ff" stop-opacity="0"/></radialGradient>
-            <radialGradient id="dash-heat-p2"><stop offset="0%" stop-color="#ff2e93" stop-opacity="0.14"/><stop offset="60%" stop-color="#ff2e93" stop-opacity="0.06"/><stop offset="100%" stop-color="#ff2e93" stop-opacity="0"/></radialGradient>
+            <radialGradient id="dash-heat-p1"><stop offset="0%" stop-color="#3b82f6" stop-opacity="0.18"/><stop offset="60%" stop-color="#3b82f6" stop-opacity="0.08"/><stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/></radialGradient>
+            <radialGradient id="dash-heat-p2"><stop offset="0%" stop-color="#f05050" stop-opacity="0.18"/><stop offset="60%" stop-color="#f05050" stop-opacity="0.08"/><stop offset="100%" stop-color="#f05050" stop-opacity="0"/></radialGradient>
             <clipPath id="${cid}"><rect x="10" y="10" width="620" height="955"/></clipPath>
           </defs>
           <rect class="dash-court-bg" x="10" y="10" width="620" height="955"/>
@@ -10526,20 +10526,14 @@ function showResults(msg) {
         const m = pt.movement && pt.movement[player];
         if (!m || !Array.isArray(m.x) || !Array.isArray(m.y)) return '';
         const n = Math.min(m.x.length, m.y.length);
-        const cutoff = Math.min(n - 1, Math.floor(tIdxF));
-        const frac = Math.max(0, Math.min(1, tIdxF - Math.floor(tIdxF)));
+        // Full-point density: draw every location the player occupied during the
+        // point (NOT gated by playback time) so the heatmap always reflects the
+        // whole point. The live trail + dot below still track the current moment.
         let out = '';
-        for (let i = 0; i <= cutoff; i += HEAT_STRIDE) {
+        for (let i = 0; i < n; i += HEAT_STRIDE) {
           const x = m.x[i], y = m.y[i];
           if (x == null || y == null) continue;
           out += `<circle cx="${cX(x).toFixed(1)}" cy="${cY(y).toFixed(1)}" r="60" fill="url(#${gradId})"/>`;
-        }
-        // Partial fade-in blob for the about-to-arrive sample
-        if (cutoff + 1 < n) {
-          const x = m.x[cutoff + 1], y = m.y[cutoff + 1];
-          if (x != null && y != null && (cutoff + 1) % HEAT_STRIDE === 0) {
-            out += `<circle cx="${cX(x).toFixed(1)}" cy="${cY(y).toFixed(1)}" r="60" fill="url(#${gradId})" opacity="${frac.toFixed(2)}"/>`;
-          }
         }
         return out;
       }
